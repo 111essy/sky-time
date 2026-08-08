@@ -54,6 +54,20 @@ function ph(k,q){ // JDE of lunar phase: q=0 new, 0.5 full (Meeus, truncated ser
     +0.00208*E*E*Math.sin(2*M);
 }
 
+// Meeus 49.3: quarter-phase correction, applied on top of the same base J/E/M/Mp/F as ph().
+// q=0.25 (first quarter) adds W, q=0.75 (last quarter) subtracts it.
+function phQuarter(k, q) {
+  var T=k/1236.85;
+  var J=2451550.09766+29.530588861*(k+q)+0.00015437*T*T;
+  var E=1-0.002516*T-0.0000074*T*T, kk=k+q;
+  var M=(2.5534+29.10535670*kk)*R, Mp=(201.5643+385.81693528*kk)*R, F=(160.7108+390.67050284*kk)*R;
+  var c = -0.62801*Math.sin(Mp) + 0.17172*E*Math.sin(M) - 0.01183*E*Math.sin(Mp+M)
+      + 0.00862*Math.sin(2*Mp) + 0.00804*Math.sin(2*F) + 0.00454*E*Math.sin(Mp-M)
+      + 0.00204*E*E*Math.sin(2*M) - 0.00180*Math.sin(Mp-2*F) - 0.00070*Math.sin(Mp+2*F);
+  var W = 0.00306 - 0.00038*E*Math.cos(M) + 0.00026*Math.cos(Mp);
+  return q === 0.25 ? J + c + W : J + c - W;
+}
+
 // Largest k where ph(k, 0.5) <= t
 function fullMoonK(t) {
   var k = Math.floor((t - 2451550.09766) / SM);
@@ -84,6 +98,25 @@ function buildTicks(groupId, radius, count, majorEvery, topColor, tickColor, max
   }
 }
 
+function buildPhaseTicks(groupId, radius, fractions, topColor, tickColor, maxLen) {
+  var group = document.getElementById(groupId);
+  var lenMajor = maxLen ? Math.min(radius * 0.3, maxLen) : radius * 0.3;
+  var edge = cy - radius;
+  var inner = edge + lenMajor;
+
+  fractions.forEach(function(f, i) {
+    var tick = document.createElementNS(svgNS, "line");
+    tick.setAttribute("x1", cx);
+    tick.setAttribute("y1", edge);
+    tick.setAttribute("x2", cx);
+    tick.setAttribute("y2", inner);
+    tick.setAttribute("stroke", i === 0 ? topColor : tickColor);
+    tick.setAttribute("stroke-width", "4");
+    tick.setAttribute("transform", "rotate(" + (f * 360) + ")");
+    group.appendChild(tick);
+  });
+}
+
 buildTicks("ticks-seconds", 75, 60, 5, "white", "grey");
 buildTicks("ticks-minutes", 125, 60, 5, "white", "grey");
 buildTicks("ticks-hours", 175, 24, 6, "white", "grey", 37.5);
@@ -92,8 +125,26 @@ var initJD = Date.now() / 86400000 + 2440587.5;
 var initK = fullMoonK(initJD);
 var initThisFM = ph(initK, 0.5);
 var initNextFM = ph(initK + 1, 0.5);
-var lunarDays = Math.round(initNextFM - initThisFM);
-buildTicks("ticks-lunar", 225, lunarDays, 5, "white", "grey", 37.5);
+var initMonthLen = initNextFM - initThisFM;
+
+var lastQuarterJDE = phQuarter(initK, 0.75);
+var newMoonJDE = ph(initK + 1, 0.0);
+var firstQuarterJDE = phQuarter(initK + 1, 0.25);
+
+var fLastQuarter = (lastQuarterJDE - initThisFM) / initMonthLen;
+var fNewMoon = (newMoonJDE - initThisFM) / initMonthLen;
+var fFirstQuarter = (firstQuarterJDE - initThisFM) / initMonthLen;
+
+buildPhaseTicks("ticks-lunar", 225, [0, fLastQuarter, fNewMoon, fFirstQuarter], "white", "grey", 37.5);
+
+function jdeToISO(j) {
+  return new Date((j - 2440587.5) * 86400000).toISOString();
+}
+console.log("Full moon (opens month):", jdeToISO(initThisFM), "0.0%");
+console.log("Last quarter:", jdeToISO(lastQuarterJDE), (fLastQuarter * 100).toFixed(1) + "%");
+console.log("New moon:", jdeToISO(newMoonJDE), (fNewMoon * 100).toFixed(1) + "%");
+console.log("First quarter:", jdeToISO(firstQuarterJDE), (fFirstQuarter * 100).toFixed(1) + "%");
+console.log("Full moon (closes month):", jdeToISO(initNextFM), "100.0%");
 
 var handSeconds = document.getElementById("hand-seconds");
 var handMinutes = document.getElementById("hand-minutes");
