@@ -9,32 +9,21 @@ body {
 </style>
 </head>
 <body>
-<svg viewBox="-450 -450 900 900" style="max-width: 382.5px;">
-<circle cx="0" cy="0" r="75" fill="none" stroke="grey" stroke-width="2" />
-<circle cx="0" cy="0" r="125" fill="none" stroke="grey" stroke-width="2" />
-<circle cx="0" cy="0" r="175" fill="none" stroke="grey" stroke-width="2" />
-<circle cx="0" cy="0" r="225" fill="none" stroke="grey" stroke-width="2" />
-<circle cx="0" cy="0" r="275" fill="none" stroke="grey" stroke-width="2" />
-<g id="ticks-seconds"></g>
-<g id="ticks-minutes"></g>
+<svg viewBox="-420 -420 840 840" style="max-width: 382.5px;">
+<circle cx="0" cy="0" r="200" fill="none" stroke="grey" stroke-width="2" />
+<circle cx="0" cy="0" r="250" fill="none" stroke="grey" stroke-width="2" />
+<circle cx="0" cy="0" r="300" fill="none" stroke="grey" stroke-width="2" />
 <g id="ticks-hours"></g>
 <g id="ticks-lunar"></g>
 <g id="ticks-solar"></g>
 <g id="hand-solar">
-<line x1="0" y1="-225" x2="0" y2="-263" stroke="crimson" stroke-width="6" stroke-linecap="round" />
+<line x1="0" y1="-250" x2="0" y2="-288" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 </g>
 <g id="hand-lunar">
-<line x1="0" y1="-175" x2="0" y2="-213" stroke="crimson" stroke-width="6" stroke-linecap="round" />
+<line x1="0" y1="-200" x2="0" y2="-238" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 </g>
 <g id="hand-hours">
-<line x1="0" y1="-125" x2="0" y2="-163" stroke="crimson" stroke-width="6" stroke-linecap="round" />
-</g>
-<g id="hand-minutes">
-<line x1="0" y1="-75" x2="0" y2="-113" stroke="crimson" stroke-width="6" stroke-linecap="round" />
-</g>
-<g id="hand-seconds">
-<line x1="0" y1="0" x2="0" y2="-63" stroke="crimson" stroke-width="6" stroke-linecap="round" />
-<circle cx="0" cy="0" r="12" fill="crimson" />
+<line x1="0" y1="-150" x2="0" y2="-188" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 </g>
 </svg>
 <script>
@@ -138,9 +127,7 @@ function buildPhaseTicks(groupId, radius, fractions, topColor, tickColor, maxLen
   });
 }
 
-buildTicks("ticks-seconds", 75, 60, 5, "white", "grey");
-buildTicks("ticks-minutes", 125, 60, 5, "white", "grey");
-buildTicks("ticks-hours", 175, 24, 6, "white", "grey", 37.5);
+buildTicks("ticks-hours", 200, 24, 6, "white", "grey", 37.5);
 
 var initJD = Date.now() / 86400000 + 2440587.5;
 var initK = fullMoonK(initJD);
@@ -156,7 +143,7 @@ var fLastQuarter = (lastQuarterJDE - initThisFM) / initMonthLen;
 var fNewMoon = (newMoonJDE - initThisFM) / initMonthLen;
 var fFirstQuarter = (firstQuarterJDE - initThisFM) / initMonthLen;
 
-buildPhaseTicks("ticks-lunar", 225, [0, fLastQuarter, fNewMoon, fFirstQuarter], "white", "grey", 37.5);
+buildPhaseTicks("ticks-lunar", 250, [0, fLastQuarter, fNewMoon, fFirstQuarter], "white", "grey", 37.5);
 
 function jdeToISO(j) {
   return new Date((j - 2440587.5) * 86400000).toISOString();
@@ -179,7 +166,7 @@ var fMarEq = (initMarEq - initThisSol) / initYearLen;
 var fJunSol = (initJunSol - initThisSol) / initYearLen;
 var fSepEq = (initSepEq - initThisSol) / initYearLen;
 
-buildPhaseTicks("ticks-solar", 275, [0, fMarEq, fJunSol, fSepEq], "white", "grey", 37.5);
+buildPhaseTicks("ticks-solar", 300, [0, fMarEq, fJunSol, fSepEq], "white", "grey", 37.5);
 
 var winterDeg = fMarEq * 360;
 var springDeg = (fJunSol - fMarEq) * 360;
@@ -190,8 +177,6 @@ console.log("Spring season:", springDeg.toFixed(1) + "°");
 console.log("Summer season:", summerDeg.toFixed(1) + "°");
 console.log("Autumn season:", autumnDeg.toFixed(1) + "°");
 
-var handSeconds = document.getElementById("hand-seconds");
-var handMinutes = document.getElementById("hand-minutes");
 var handHours = document.getElementById("hand-hours");
 var handLunar = document.getElementById("hand-lunar");
 var handSolar = document.getElementById("hand-solar");
@@ -201,8 +186,6 @@ function tick() {
   var secFraction = (now.getSeconds() + now.getMilliseconds() / 1000) / 60;
   var minFraction = (now.getMinutes() + secFraction) / 60;
   var hourFraction = (now.getHours() + minFraction) / 24;
-  handSeconds.setAttribute("transform", "rotate(" + (secFraction * 360) + ")");
-  handMinutes.setAttribute("transform", "rotate(" + (minFraction * 360) + ")");
   handHours.setAttribute("transform", "rotate(" + (hourFraction * 360) + ")");
 
   var jd = Date.now() / 86400000 + 2440587.5;
