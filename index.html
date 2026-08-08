@@ -13,9 +13,14 @@ body {
 <circle cx="400" cy="400" r="75" fill="none" stroke="grey" stroke-width="2" />
 <circle cx="400" cy="400" r="125" fill="none" stroke="grey" stroke-width="2" />
 <circle cx="400" cy="400" r="175" fill="none" stroke="grey" stroke-width="2" />
+<circle cx="400" cy="400" r="225" fill="none" stroke="grey" stroke-width="2" />
 <g id="ticks-seconds"></g>
 <g id="ticks-minutes"></g>
 <g id="ticks-hours"></g>
+<g id="ticks-lunar"></g>
+<g id="hand-lunar">
+<line x1="400" y1="225" x2="400" y2="187" stroke="crimson" stroke-width="6" stroke-linecap="round" />
+</g>
 <g id="hand-hours">
 <line x1="400" y1="275" x2="400" y2="237" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 </g>
@@ -30,6 +35,31 @@ body {
 <script>
 var svgNS = "http://www.w3.org/2000/svg";
 var cx = 400, cy = 400;
+
+// Copied verbatim from files/calendar-mechanism.html (there named ph, not phJDE)
+var R = Math.PI / 180;
+var SM = 29.530589;
+function ph(k,q){ // JDE of lunar phase: q=0 new, 0.5 full (Meeus, truncated series)
+  var T=k/1236.85;
+  var J=2451550.09766+29.530588861*(k+q)+0.00015437*T*T;
+  var E=1-0.002516*T-0.0000074*T*T, kk=k+q;
+  var M=(2.5534+29.10535670*kk)*R, Mp=(201.5643+385.81693528*kk)*R, F=(160.7108+390.67050284*kk)*R;
+  if(q===0.5){
+    return J-0.40614*Math.sin(Mp)+0.17302*E*Math.sin(M)+0.01614*Math.sin(2*Mp)
+      +0.01043*Math.sin(2*F)+0.00734*E*Math.sin(Mp-M)-0.00514*E*Math.sin(Mp+M)
+      +0.00209*E*E*Math.sin(2*M)-0.00111*Math.sin(Mp-2*F)-0.00057*Math.sin(Mp+2*F);
+  }
+  return J-0.40720*Math.sin(Mp)+0.17241*E*Math.sin(M)+0.01608*Math.sin(2*Mp)
+    +0.01039*Math.sin(2*F)+0.00739*E*Math.sin(Mp-M)-0.00514*E*Math.sin(Mp+M)
+    +0.00208*E*E*Math.sin(2*M);
+}
+
+// Largest k where ph(k, 0.5) <= t
+function fullMoonK(t) {
+  var k = Math.floor((t - 2451550.09766) / SM);
+  while (ph(k, 0.5) <= t) k++;
+  return k - 1;
+}
 
 function buildTicks(groupId, radius, count, majorEvery, topColor, tickColor, maxLen) {
   var group = document.getElementById(groupId);
@@ -58,9 +88,17 @@ buildTicks("ticks-seconds", 75, 60, 5, "white", "grey");
 buildTicks("ticks-minutes", 125, 60, 5, "white", "grey");
 buildTicks("ticks-hours", 175, 24, 6, "white", "grey", 37.5);
 
+var initJD = Date.now() / 86400000 + 2440587.5;
+var initK = fullMoonK(initJD);
+var initThisFM = ph(initK, 0.5);
+var initNextFM = ph(initK + 1, 0.5);
+var lunarDays = Math.round(initNextFM - initThisFM);
+buildTicks("ticks-lunar", 225, lunarDays, 5, "white", "grey", 37.5);
+
 var handSeconds = document.getElementById("hand-seconds");
 var handMinutes = document.getElementById("hand-minutes");
 var handHours = document.getElementById("hand-hours");
+var handLunar = document.getElementById("hand-lunar");
 
 function tick() {
   var now = new Date();
@@ -70,6 +108,14 @@ function tick() {
   handSeconds.setAttribute("transform", "rotate(" + (secFraction * 360) + " " + cx + " " + cy + ")");
   handMinutes.setAttribute("transform", "rotate(" + (minFraction * 360) + " " + cx + " " + cy + ")");
   handHours.setAttribute("transform", "rotate(" + (hourFraction * 360) + " " + cx + " " + cy + ")");
+
+  var jd = Date.now() / 86400000 + 2440587.5;
+  var k = fullMoonK(jd);
+  var thisFM = ph(k, 0.5);
+  var nextFM = ph(k + 1, 0.5);
+  var lunarFraction = (jd - thisFM) / (nextFM - thisFM);
+  handLunar.setAttribute("transform", "rotate(" + (lunarFraction * 360) + " " + cx + " " + cy + ")");
+
   requestAnimationFrame(tick);
 }
 
