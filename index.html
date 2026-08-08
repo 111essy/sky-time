@@ -6,10 +6,39 @@
 <body>
 <svg viewBox="0 0 400 400" style="max-width: 170px;">
 <circle cx="200" cy="200" r="150" fill="none" stroke="grey" stroke-width="2" />
+<g id="ticks"></g>
 <g id="hand">
 <line x1="200" y1="200" x2="200" y2="62" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 <circle cx="200" cy="200" r="12" fill="crimson" />
 </g>
 </svg>
+<script>
+var svgNS = "http://www.w3.org/2000/svg";
+var ticks = document.getElementById("ticks");
+
+for (var i = 0; i < 60; i++) {
+  var tick = document.createElementNS(svgNS, "line");
+  var isFive = i % 5 === 0;
+  tick.setAttribute("x1", "200");
+  tick.setAttribute("y1", isFive ? "50" : "63.5");
+  tick.setAttribute("x2", "200");
+  tick.setAttribute("y2", "95");
+  tick.setAttribute("stroke", i === 0 ? "orange" : "grey");
+  tick.setAttribute("stroke-width", isFive ? "4" : "2");
+  tick.setAttribute("transform", "rotate(" + (i * 6) + " 200 200)");
+  ticks.appendChild(tick);
+}
+
+var hand = document.getElementById("hand");
+
+function dayFraction() {
+  var now = new Date();
+  var f = (now.getSeconds() + now.getMilliseconds() / 1000) / 60;
+  hand.setAttribute("transform", "rotate(" + (f * 360) + " 200 200)");
+  requestAnimationFrame(dayFraction);
+}
+
+requestAnimationFrame(dayFraction);
+</script>
 </body>
 </html>
