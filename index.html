@@ -9,32 +9,32 @@ body {
 </style>
 </head>
 <body>
-<svg viewBox="0 0 800 800" style="max-width: 340px;">
-<circle cx="400" cy="400" r="75" fill="none" stroke="grey" stroke-width="2" />
-<circle cx="400" cy="400" r="125" fill="none" stroke="grey" stroke-width="2" />
-<circle cx="400" cy="400" r="175" fill="none" stroke="grey" stroke-width="2" />
-<circle cx="400" cy="400" r="225" fill="none" stroke="grey" stroke-width="2" />
+<svg viewBox="-450 -450 900 900" style="max-width: 382.5px;">
+<circle cx="0" cy="0" r="75" fill="none" stroke="grey" stroke-width="2" />
+<circle cx="0" cy="0" r="125" fill="none" stroke="grey" stroke-width="2" />
+<circle cx="0" cy="0" r="175" fill="none" stroke="grey" stroke-width="2" />
+<circle cx="0" cy="0" r="225" fill="none" stroke="grey" stroke-width="2" />
 <g id="ticks-seconds"></g>
 <g id="ticks-minutes"></g>
 <g id="ticks-hours"></g>
 <g id="ticks-lunar"></g>
 <g id="hand-lunar">
-<line x1="400" y1="225" x2="400" y2="187" stroke="crimson" stroke-width="6" stroke-linecap="round" />
+<line x1="0" y1="-175" x2="0" y2="-213" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 </g>
 <g id="hand-hours">
-<line x1="400" y1="275" x2="400" y2="237" stroke="crimson" stroke-width="6" stroke-linecap="round" />
+<line x1="0" y1="-125" x2="0" y2="-163" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 </g>
 <g id="hand-minutes">
-<line x1="400" y1="325" x2="400" y2="287" stroke="crimson" stroke-width="6" stroke-linecap="round" />
+<line x1="0" y1="-75" x2="0" y2="-113" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 </g>
 <g id="hand-seconds">
-<line x1="400" y1="400" x2="400" y2="337" stroke="crimson" stroke-width="6" stroke-linecap="round" />
-<circle cx="400" cy="400" r="12" fill="crimson" />
+<line x1="0" y1="0" x2="0" y2="-63" stroke="crimson" stroke-width="6" stroke-linecap="round" />
+<circle cx="0" cy="0" r="12" fill="crimson" />
 </g>
 </svg>
 <script>
 var svgNS = "http://www.w3.org/2000/svg";
-var cx = 400, cy = 400;
+var cx = 0, cy = 0;
 
 // Copied verbatim from files/calendar-mechanism.html (there named ph, not phJDE)
 var R = Math.PI / 180;
@@ -79,7 +79,7 @@ function buildTicks(groupId, radius, count, majorEvery, topColor, tickColor, max
     tick.setAttribute("y2", inner);
     tick.setAttribute("stroke", i === 0 ? topColor : tickColor);
     tick.setAttribute("stroke-width", isMajor ? "4" : "2");
-    tick.setAttribute("transform", "rotate(" + (i * step) + " " + cx + " " + cy + ")");
+    tick.setAttribute("transform", "rotate(" + (i * step) + ")");
     group.appendChild(tick);
   }
 }
@@ -105,16 +105,16 @@ function tick() {
   var secFraction = (now.getSeconds() + now.getMilliseconds() / 1000) / 60;
   var minFraction = (now.getMinutes() + secFraction) / 60;
   var hourFraction = (now.getHours() + minFraction) / 24;
-  handSeconds.setAttribute("transform", "rotate(" + (secFraction * 360) + " " + cx + " " + cy + ")");
-  handMinutes.setAttribute("transform", "rotate(" + (minFraction * 360) + " " + cx + " " + cy + ")");
-  handHours.setAttribute("transform", "rotate(" + (hourFraction * 360) + " " + cx + " " + cy + ")");
+  handSeconds.setAttribute("transform", "rotate(" + (secFraction * 360) + ")");
+  handMinutes.setAttribute("transform", "rotate(" + (minFraction * 360) + ")");
+  handHours.setAttribute("transform", "rotate(" + (hourFraction * 360) + ")");
 
   var jd = Date.now() / 86400000 + 2440587.5;
   var k = fullMoonK(jd);
   var thisFM = ph(k, 0.5);
   var nextFM = ph(k + 1, 0.5);
   var lunarFraction = (jd - thisFM) / (nextFM - thisFM);
-  handLunar.setAttribute("transform", "rotate(" + (lunarFraction * 360) + " " + cx + " " + cy + ")");
+  handLunar.setAttribute("transform", "rotate(" + (lunarFraction * 360) + ")");
 
   requestAnimationFrame(tick);
 }
