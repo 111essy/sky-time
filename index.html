@@ -12,8 +12,13 @@ body {
 <svg viewBox="0 0 800 800" style="max-width: 340px;">
 <circle cx="400" cy="400" r="75" fill="none" stroke="grey" stroke-width="2" />
 <circle cx="400" cy="400" r="125" fill="none" stroke="grey" stroke-width="2" />
+<circle cx="400" cy="400" r="175" fill="none" stroke="grey" stroke-width="2" />
 <g id="ticks-seconds"></g>
 <g id="ticks-minutes"></g>
+<g id="ticks-hours"></g>
+<g id="hand-hours">
+<line x1="400" y1="275" x2="400" y2="237" stroke="crimson" stroke-width="6" stroke-linecap="round" />
+</g>
 <g id="hand-minutes">
 <line x1="400" y1="325" x2="400" y2="287" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 </g>
@@ -26,40 +31,45 @@ body {
 var svgNS = "http://www.w3.org/2000/svg";
 var cx = 400, cy = 400;
 
-function buildTicks(groupId, radius, topColor, tickColor) {
+function buildTicks(groupId, radius, count, majorEvery, topColor, tickColor) {
   var group = document.getElementById(groupId);
-  var lenFive = radius * 0.3;
-  var lenOther = lenFive * 0.7;
+  var lenMajor = radius * 0.3;
+  var lenMinor = lenMajor * 0.7;
   var edge = cy - radius;
-  var inner = edge + lenFive;
-  var outerShort = edge + (lenFive - lenOther);
+  var inner = edge + lenMajor;
+  var outerShort = edge + (lenMajor - lenMinor);
+  var step = 360 / count;
 
-  for (var i = 0; i < 60; i++) {
-    var isFive = i % 5 === 0;
+  for (var i = 0; i < count; i++) {
+    var isMajor = i % majorEvery === 0;
     var tick = document.createElementNS(svgNS, "line");
     tick.setAttribute("x1", cx);
-    tick.setAttribute("y1", isFive ? edge : outerShort);
+    tick.setAttribute("y1", isMajor ? edge : outerShort);
     tick.setAttribute("x2", cx);
     tick.setAttribute("y2", inner);
     tick.setAttribute("stroke", i === 0 ? topColor : tickColor);
-    tick.setAttribute("stroke-width", isFive ? "4" : "2");
-    tick.setAttribute("transform", "rotate(" + (i * 6) + " " + cx + " " + cy + ")");
+    tick.setAttribute("stroke-width", isMajor ? "4" : "2");
+    tick.setAttribute("transform", "rotate(" + (i * step) + " " + cx + " " + cy + ")");
     group.appendChild(tick);
   }
 }
 
-buildTicks("ticks-seconds", 75, "orange", "grey");
-buildTicks("ticks-minutes", 125, "orange", "grey");
+buildTicks("ticks-seconds", 75, 60, 5, "orange", "grey");
+buildTicks("ticks-minutes", 125, 60, 5, "orange", "grey");
+buildTicks("ticks-hours", 175, 24, 6, "orange", "grey");
 
 var handSeconds = document.getElementById("hand-seconds");
 var handMinutes = document.getElementById("hand-minutes");
+var handHours = document.getElementById("hand-hours");
 
 function tick() {
   var now = new Date();
   var secFraction = (now.getSeconds() + now.getMilliseconds() / 1000) / 60;
   var minFraction = (now.getMinutes() + secFraction) / 60;
+  var hourFraction = (now.getHours() + minFraction) / 24;
   handSeconds.setAttribute("transform", "rotate(" + (secFraction * 360) + " " + cx + " " + cy + ")");
   handMinutes.setAttribute("transform", "rotate(" + (minFraction * 360) + " " + cx + " " + cy + ")");
+  handHours.setAttribute("transform", "rotate(" + (hourFraction * 360) + " " + cx + " " + cy + ")");
   requestAnimationFrame(tick);
 }
 
