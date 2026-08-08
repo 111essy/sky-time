@@ -31,9 +31,9 @@ body {
 var svgNS = "http://www.w3.org/2000/svg";
 var cx = 400, cy = 400;
 
-function buildTicks(groupId, radius, count, majorEvery, topColor, tickColor) {
+function buildTicks(groupId, radius, count, majorEvery, topColor, tickColor, maxLen) {
   var group = document.getElementById(groupId);
-  var lenMajor = radius * 0.3;
+  var lenMajor = maxLen ? Math.min(radius * 0.3, maxLen) : radius * 0.3;
   var lenMinor = lenMajor * 0.7;
   var edge = cy - radius;
   var inner = edge + lenMajor;
@@ -56,7 +56,7 @@ function buildTicks(groupId, radius, count, majorEvery, topColor, tickColor) {
 
 buildTicks("ticks-seconds", 75, 60, 5, "white", "grey");
 buildTicks("ticks-minutes", 125, 60, 5, "white", "grey");
-buildTicks("ticks-hours", 175, 24, 6, "white", "grey");
+buildTicks("ticks-hours", 175, 24, 6, "white", "grey", 37.5);
 
 var handSeconds = document.getElementById("hand-seconds");
 var handMinutes = document.getElementById("hand-minutes");
