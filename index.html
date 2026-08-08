@@ -85,6 +85,44 @@ function fullMoonK(t) {
   return k - 1;
 }
 
+// The lunar ring's marks sit at fixed 0/25/50/75% (the phases ARE quarters,
+// exact elongations). The pointer interpolates linearly between whichever
+// pair of true instants t falls between, so its speed varies the way the
+// moon's orbital speed actually varies, instead of sweeping uniformly.
+function lunarPointerFraction(t) {
+  var k = fullMoonK(t);
+  var t0 = ph(k, 0.5);
+  var t1 = phQuarter(k, 0.75);
+  var t2 = ph(k + 1, 0.0);
+  var t3 = phQuarter(k + 1, 0.25);
+  var t4 = ph(k + 1, 0.5);
+  if (t < t1) return (t - t0) / (t1 - t0) * 0.25;
+  if (t < t2) return 0.25 + (t - t1) / (t2 - t1) * 0.25;
+  if (t < t3) return 0.5 + (t - t2) / (t3 - t2) * 0.25;
+  return 0.75 + (t - t3) / (t4 - t3) * 0.25;
+}
+
+// Standard low-precision solar position (Meeus ch.25): mean longitude L0,
+// mean anomaly M, equation of centre C. True longitude = L0 + C.
+function sunLongitude(jde) {
+  var T = (jde - 2451545.0) / 36525;
+  var L0 = 280.46646 + 36000.76983 * T + 0.0003032 * T * T;
+  var M = 357.52911 + 35999.05029 * T - 0.0001537 * T * T;
+  var Mr = M * R;
+  var C = (1.914602 - 0.004817 * T - 0.000014 * T * T) * Math.sin(Mr)
+    + (0.019993 - 0.000101 * T) * Math.sin(2 * Mr)
+    + 0.000289 * Math.sin(3 * Mr);
+  var trueLong = L0 + C;
+  return ((trueLong % 360) + 360) % 360;
+}
+
+// The solar ring IS longitude: no interpolation needed, exact everywhere.
+// 270 deg is the winter solstice, the ring's 0% mark.
+function solarPointerFraction(t) {
+  var lambda = sunLongitude(t);
+  return (((lambda - 270) % 360 + 360) % 360) / 360;
+}
+
 // Copied verbatim from files/calendar-mechanism.html
 function decSol(y){var Y=(y-2000)/1000;return 2451900.05952+365242.74049*Y-0.06223*Y*Y-0.00823*Y*Y*Y+0.00032*Y*Y*Y*Y;}
 function marEq(y){var Y=(y-2000)/1000;return 2451623.80984+365242.37404*Y+0.05169*Y*Y-0.00411*Y*Y*Y-0.00057*Y*Y*Y*Y;}
@@ -152,20 +190,16 @@ var lastQuarterJDE = phQuarter(initK, 0.75);
 var newMoonJDE = ph(initK + 1, 0.0);
 var firstQuarterJDE = phQuarter(initK + 1, 0.25);
 
-var fLastQuarter = (lastQuarterJDE - initThisFM) / initMonthLen;
-var fNewMoon = (newMoonJDE - initThisFM) / initMonthLen;
-var fFirstQuarter = (firstQuarterJDE - initThisFM) / initMonthLen;
-
-buildPhaseTicks("ticks-lunar", 250, [0, fLastQuarter, fNewMoon, fFirstQuarter], "white", "grey", 37.5);
+buildPhaseTicks("ticks-lunar", 250, [0, 0.25, 0.5, 0.75], "white", "grey", 37.5);
 
 function jdeToISO(j) {
   return new Date((j - 2440587.5) * 86400000).toISOString();
 }
-console.log("Full moon (opens month):", jdeToISO(initThisFM), "0.0%");
-console.log("Last quarter:", jdeToISO(lastQuarterJDE), (fLastQuarter * 100).toFixed(1) + "%");
-console.log("New moon:", jdeToISO(newMoonJDE), (fNewMoon * 100).toFixed(1) + "%");
-console.log("First quarter:", jdeToISO(firstQuarterJDE), (fFirstQuarter * 100).toFixed(1) + "%");
-console.log("Full moon (closes month):", jdeToISO(initNextFM), "100.0%");
+console.log("Full moon (opens month, 0%):", jdeToISO(initThisFM));
+console.log("Last quarter (25%):", jdeToISO(lastQuarterJDE));
+console.log("New moon (50%):", jdeToISO(newMoonJDE));
+console.log("First quarter (75%):", jdeToISO(firstQuarterJDE));
+console.log("Full moon (closes month, 100%):", jdeToISO(initNextFM));
 
 var initSolY = solsticeYear(initJD);
 var initThisSol = decSol(initSolY);
@@ -179,7 +213,7 @@ var fMarEq = (initMarEq - initThisSol) / initYearLen;
 var fJunSol = (initJunSol - initThisSol) / initYearLen;
 var fSepEq = (initSepEq - initThisSol) / initYearLen;
 
-buildPhaseTicks("ticks-solar", 300, [0, fMarEq, fJunSol, fSepEq], "white", "grey", 37.5);
+buildPhaseTicks("ticks-solar", 300, [0, 0.25, 0.5, 0.75], "white", "grey", 37.5);
 
 var winterDeg = fMarEq * 360;
 var springDeg = (fJunSol - fMarEq) * 360;
@@ -189,6 +223,9 @@ console.log("Winter season:", winterDeg.toFixed(1) + "°");
 console.log("Spring season:", springDeg.toFixed(1) + "°");
 console.log("Summer season:", summerDeg.toFixed(1) + "°");
 console.log("Autumn season:", autumnDeg.toFixed(1) + "°");
+
+console.log("Current lunar pointer fraction:", lunarPointerFraction(initJD).toFixed(4));
+console.log("Current solar pointer fraction:", solarPointerFraction(initJD).toFixed(4));
 
 var handHours = document.getElementById("hand-hours");
 var handLunar = document.getElementById("hand-lunar");
@@ -210,16 +247,10 @@ function tick() {
   handClockSecond.setAttribute("transform", "rotate(" + (secFraction * 360) + ")");
 
   var jd = Date.now() / 86400000 + 2440587.5;
-  var k = fullMoonK(jd);
-  var thisFM = ph(k, 0.5);
-  var nextFM = ph(k + 1, 0.5);
-  var lunarFraction = (jd - thisFM) / (nextFM - thisFM);
+  var lunarFraction = lunarPointerFraction(jd);
   handLunar.setAttribute("transform", "rotate(" + (lunarFraction * 360) + ")");
 
-  var solY = solsticeYear(jd);
-  var thisSol = decSol(solY);
-  var nextSol = decSol(solY + 1);
-  var solarFraction = (jd - thisSol) / (nextSol - thisSol);
+  var solarFraction = solarPointerFraction(jd);
   handSolar.setAttribute("transform", "rotate(" + (solarFraction * 360) + ")");
 
   requestAnimationFrame(tick);
