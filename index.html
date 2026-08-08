@@ -39,19 +39,23 @@ var cx = 0, cy = 0;
 // Copied verbatim from files/calendar-mechanism.html (there named ph, not phJDE)
 var R = Math.PI / 180;
 var SM = 29.530589;
-function ph(k,q){ // JDE of lunar phase: q=0 new, 0.5 full (Meeus, truncated series)
+function ph(k,q){ // JDE of lunar phase: q=0 new, 0.5 full (Meeus ch.49, full 16-term series)
   var T=k/1236.85;
   var J=2451550.09766+29.530588861*(k+q)+0.00015437*T*T;
   var E=1-0.002516*T-0.0000074*T*T, kk=k+q;
   var M=(2.5534+29.10535670*kk)*R, Mp=(201.5643+385.81693528*kk)*R, F=(160.7108+390.67050284*kk)*R;
+  var Om=(124.7746-1.56375588*k)*R;
+  var tail = -0.00111*Math.sin(Mp-2*F) - 0.00057*Math.sin(Mp+2*F) + 0.00056*E*Math.sin(2*Mp+M)
+    - 0.00042*Math.sin(3*Mp) + 0.00042*E*Math.sin(M+2*F) + 0.00038*E*Math.sin(M-2*F)
+    - 0.00024*E*Math.sin(2*Mp-M) - 0.00017*Math.sin(Om) - 0.00007*Math.sin(Mp+2*M);
   if(q===0.5){
     return J-0.40614*Math.sin(Mp)+0.17302*E*Math.sin(M)+0.01614*Math.sin(2*Mp)
       +0.01043*Math.sin(2*F)+0.00734*E*Math.sin(Mp-M)-0.00514*E*Math.sin(Mp+M)
-      +0.00209*E*E*Math.sin(2*M)-0.00111*Math.sin(Mp-2*F)-0.00057*Math.sin(Mp+2*F);
+      +0.00209*E*E*Math.sin(2*M)+tail;
   }
   return J-0.40720*Math.sin(Mp)+0.17241*E*Math.sin(M)+0.01608*Math.sin(2*Mp)
     +0.01039*Math.sin(2*F)+0.00739*E*Math.sin(Mp-M)-0.00514*E*Math.sin(Mp+M)
-    +0.00208*E*E*Math.sin(2*M);
+    +0.00208*E*E*Math.sin(2*M)+tail;
 }
 
 // Meeus 49.3: quarter-phase correction, applied on top of the same base J/E/M/Mp/F as ph().

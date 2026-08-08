@@ -128,19 +128,23 @@ var NODE_ANCHOR=2455551.84;           // 2010 Dec 21 eclipse: moon at descending
 // mag ~0.90, NOT ages): 1619, 2075. Unverified: 1247, 2382.
 var AGES=[{j:2319681.58,label:"Age of 1638"},{j:2343423.77,label:"Age of 1703"},{j:2455551.84,label:"Age of 2010"},{j:2486233.33,label:"Age of 2094"}];
 
-function ph(k,q){ // JDE of lunar phase: q=0 new, 0.5 full (Meeus, truncated series)
+function ph(k,q){ // JDE of lunar phase: q=0 new, 0.5 full (Meeus ch.49, full 16-term series)
   var T=k/1236.85;
   var J=2451550.09766+29.530588861*(k+q)+0.00015437*T*T;
   var E=1-0.002516*T-0.0000074*T*T, kk=k+q;
   var M=(2.5534+29.10535670*kk)*R, Mp=(201.5643+385.81693528*kk)*R, F=(160.7108+390.67050284*kk)*R;
+  var Om=(124.7746-1.56375588*k)*R;
+  var tail = -0.00111*Math.sin(Mp-2*F) - 0.00057*Math.sin(Mp+2*F) + 0.00056*E*Math.sin(2*Mp+M)
+    - 0.00042*Math.sin(3*Mp) + 0.00042*E*Math.sin(M+2*F) + 0.00038*E*Math.sin(M-2*F)
+    - 0.00024*E*Math.sin(2*Mp-M) - 0.00017*Math.sin(Om) - 0.00007*Math.sin(Mp+2*M);
   if(q===0.5){
     return J-0.40614*Math.sin(Mp)+0.17302*E*Math.sin(M)+0.01614*Math.sin(2*Mp)
       +0.01043*Math.sin(2*F)+0.00734*E*Math.sin(Mp-M)-0.00514*E*Math.sin(Mp+M)
-      +0.00209*E*E*Math.sin(2*M)-0.00111*Math.sin(Mp-2*F)-0.00057*Math.sin(Mp+2*F);
+      +0.00209*E*E*Math.sin(2*M)+tail;
   }
   return J-0.40720*Math.sin(Mp)+0.17241*E*Math.sin(M)+0.01608*Math.sin(2*Mp)
     +0.01039*Math.sin(2*F)+0.00739*E*Math.sin(Mp-M)-0.00514*E*Math.sin(Mp+M)
-    +0.00208*E*E*Math.sin(2*M);
+    +0.00208*E*E*Math.sin(2*M)+tail;
 }
 function decSol(y){var Y=(y-2000)/1000;return 2451900.05952+365242.74049*Y-0.06223*Y*Y-0.00823*Y*Y*Y+0.00032*Y*Y*Y*Y;}
 function marEq(y){var Y=(y-2000)/1000;return 2451623.80984+365242.37404*Y+0.05169*Y*Y-0.00411*Y*Y*Y-0.00057*Y*Y*Y*Y;}
