@@ -85,21 +85,48 @@ function fullMoonK(t) {
   return k - 1;
 }
 
+// Meeus ch.47: Moon's geocentric ecliptic longitude, mean longitude L'
+// plus the leading periodic terms of table 47.A (the ones independent
+// of eccentricity correction, i.e. no extra E factor).
+function moonLongitude(jde) {
+  var T = (jde - 2451545.0) / 36525;
+  var Lp = 218.3164477 + 481267.88123421 * T;
+  var D = 297.8501921 + 445267.1114034 * T;
+  var M = 357.5291092 + 35999.0502909 * T;
+  var Mp = 134.9633964 + 477198.8675055 * T;
+  var F = 93.2720950 + 483202.0175233 * T;
+
+  var Dr = D * R, Mr = M * R, Mpr = Mp * R, Fr = F * R;
+
+  var sum = 6.288774 * Math.sin(Mpr)
+    + 1.274027 * Math.sin(2 * Dr - Mpr)
+    + 0.658314 * Math.sin(2 * Dr)
+    + 0.213618 * Math.sin(2 * Mpr)
+    - 0.185116 * Math.sin(Mr)
+    - 0.114332 * Math.sin(2 * Fr)
+    + 0.058793 * Math.sin(2 * Dr - 2 * Mpr)
+    + 0.057066 * Math.sin(2 * Dr - Mr - Mpr)
+    + 0.053322 * Math.sin(2 * Dr + Mpr)
+    + 0.045758 * Math.sin(2 * Dr - Mr)
+    - 0.040923 * Math.sin(Mr - Mpr)
+    - 0.034720 * Math.sin(Dr)
+    - 0.030383 * Math.sin(Mr + Mpr)
+    + 0.015327 * Math.sin(2 * Dr - 2 * Fr)
+    - 0.012528 * Math.sin(Mpr + 2 * Fr)
+    + 0.010980 * Math.sin(Mpr - 2 * Fr)
+    + 0.010675 * Math.sin(4 * Dr - Mpr)
+    + 0.010034 * Math.sin(3 * Mpr)
+    + 0.008548 * Math.sin(4 * Dr - 2 * Mpr);
+
+  return ((Lp + sum) % 360 + 360) % 360;
+}
+
 // The lunar ring's marks sit at fixed 0/25/50/75% (the phases ARE quarters,
-// exact elongations). The pointer interpolates linearly between whichever
-// pair of true instants t falls between, so its speed varies the way the
-// moon's orbital speed actually varies, instead of sweeping uniformly.
+// exact elongations). The ring IS elongation D = moonLongitude - sunLongitude,
+// anchored so full moon (D=180) sits at 0%: no interpolation, exact everywhere.
 function lunarPointerFraction(t) {
-  var k = fullMoonK(t);
-  var t0 = ph(k, 0.5);
-  var t1 = phQuarter(k, 0.75);
-  var t2 = ph(k + 1, 0.0);
-  var t3 = phQuarter(k + 1, 0.25);
-  var t4 = ph(k + 1, 0.5);
-  if (t < t1) return (t - t0) / (t1 - t0) * 0.25;
-  if (t < t2) return 0.25 + (t - t1) / (t2 - t1) * 0.25;
-  if (t < t3) return 0.5 + (t - t2) / (t3 - t2) * 0.25;
-  return 0.75 + (t - t3) / (t4 - t3) * 0.25;
+  var elong = moonLongitude(t) - sunLongitude(t);
+  return (((elong - 180) % 360 + 360) % 360) / 360;
 }
 
 // Standard low-precision solar position (Meeus ch.25): mean longitude L0,
@@ -248,6 +275,17 @@ console.log("Last quarter (25%):", jdeToISO(lastQuarterJDE));
 console.log("New moon (50%):", jdeToISO(newMoonJDE));
 console.log("First quarter (75%):", jdeToISO(firstQuarterJDE));
 console.log("Full moon (closes month, 100%):", jdeToISO(initNextFM));
+
+console.log("Elongation fraction @ full moon (expect 0.0000):", lunarPointerFraction(initThisFM).toFixed(4));
+console.log("Elongation fraction @ last quarter (expect 0.2500):", lunarPointerFraction(lastQuarterJDE).toFixed(4));
+console.log("Elongation fraction @ new moon (expect 0.5000):", lunarPointerFraction(newMoonJDE).toFixed(4));
+console.log("Elongation fraction @ first quarter (expect 0.7500):", lunarPointerFraction(firstQuarterJDE).toFixed(4));
+
+var oldInterpolated = 0.37812;
+var newElongFraction = lunarPointerFraction(2461262.00000);
+console.log("Old interpolated fraction @ JD 2461262.00000:", oldInterpolated);
+console.log("New elongation fraction @ JD 2461262.00000:", newElongFraction.toFixed(5));
+console.log("Difference in degrees of ring:", ((newElongFraction - oldInterpolated) * 360).toFixed(3) + "°");
 
 var initSolY = solsticeYear(initJD);
 var initThisSol = solarLongitudeCrossing(270, seedJD(initSolY, 12, 21));
