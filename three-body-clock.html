@@ -346,6 +346,8 @@ var localNoonDate = (function() {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0, 0);
 })();
 var noonJD = localNoonDate.getTime() / 86400000 + 2440587.5;
+var lastLocalDateStr = localNoonDate.toDateString();
+var lastSunMarksCheck = 0;
 
 var tzName = Intl.DateTimeFormat().resolvedOptions().timeZone;
 var currentLat = ROTTERDAM_LAT;
@@ -524,6 +526,20 @@ function tick() {
 
   var solarFraction = solarPointerFraction(jd);
   handSolar.setAttribute("transform", "rotate(" + (solarFraction * 360) + ")");
+
+  // Throttled to once a minute, not every frame — cheap enough either way,
+  // but there's no reason to check 60 times a second for a date rollover.
+  var nowMs = Date.now();
+  if (nowMs - lastSunMarksCheck >= 60000) {
+    lastSunMarksCheck = nowMs;
+    var todayStr = now.toDateString();
+    if (todayStr !== lastLocalDateStr) {
+      lastLocalDateStr = todayStr;
+      localNoonDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0, 0);
+      noonJD = localNoonDate.getTime() / 86400000 + 2440587.5;
+      renderSunMarks(currentLat, currentLon);
+    }
+  }
 
   requestAnimationFrame(tick);
 }
