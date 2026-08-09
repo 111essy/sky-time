@@ -177,6 +177,38 @@ function buildPhaseTicks(groupId, radius, fractions, topColor, tickColor, maxLen
   });
 }
 
+// Small moon-phase glyph: full = filled disc, new = outline only,
+// first/last quarter = half-lit disc (right/left, matching real orientation).
+function moonIcon(x, y, r, phase) {
+  var g = document.createElementNS(svgNS, "g");
+  var disc = document.createElementNS(svgNS, "circle");
+  disc.setAttribute("cx", x);
+  disc.setAttribute("cy", y);
+  disc.setAttribute("r", r);
+  disc.setAttribute("fill", phase === "full" ? "white" : "none");
+  disc.setAttribute("stroke", "white");
+  disc.setAttribute("stroke-width", "2");
+  g.appendChild(disc);
+
+  if (phase === "first" || phase === "last") {
+    var sweep = phase === "first" ? 1 : 0;
+    var half = document.createElementNS(svgNS, "path");
+    half.setAttribute("d", "M " + x + " " + (y - r) + " A " + r + " " + r + " 0 0 " + sweep + " " + x + " " + (y + r) + " Z");
+    half.setAttribute("fill", "white");
+    g.appendChild(half);
+  }
+
+  return g;
+}
+
+function buildMoonPhaseMarks(groupId, radius, iconR) {
+  var group = document.getElementById(groupId);
+  group.appendChild(moonIcon(0, -radius, iconR, "full"));
+  group.appendChild(moonIcon(radius, 0, iconR, "last"));
+  group.appendChild(moonIcon(0, radius, iconR, "new"));
+  group.appendChild(moonIcon(-radius, 0, iconR, "first"));
+}
+
 buildTicks("ticks-hours", 200, 24, 6, "white", "grey", 37.5);
 buildTicks("ticks-clock", 150, 60, 5, "white", "grey", 37.5);
 
@@ -190,7 +222,7 @@ var lastQuarterJDE = phQuarter(initK, 0.75);
 var newMoonJDE = ph(initK + 1, 0.0);
 var firstQuarterJDE = phQuarter(initK + 1, 0.25);
 
-buildPhaseTicks("ticks-lunar", 250, [0, 0.25, 0.5, 0.75], "white", "grey", 37.5);
+buildMoonPhaseMarks("ticks-lunar", 228, 14);
 
 function jdeToISO(j) {
   return new Date((j - 2440587.5) * 86400000).toISOString();
