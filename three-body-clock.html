@@ -360,9 +360,15 @@ buildTicks("ticks-clock", 150, 60, 5, "white", "grey", 37.5);
 var initJD = Date.now() / 86400000 + 2440587.5;
 
 var tzName = Intl.DateTimeFormat().resolvedOptions().timeZone;
-var currentLat = ROTTERDAM_LAT;
-var currentLon = ROTTERDAM_LON;
-var locationStatus = "default";
+var currentLat = null;
+var currentLon = null;
+// Exactly four states. Only "located" and "manual" render the
+// location-dependent marks. "locating" is the initial state; "unavailable"
+// covers denial, timeout, an unsupported browser, or any other geolocation
+// error. The reason for "unavailable" is tracked separately (below), not
+// folded into the state itself.
+var locationStatus = "locating";
+var locationFailureReason = null;
 
 // Local noon of the given date, as an absolute instant — deterministic
 // (unlike page-load time) and halves the one-pass declination/eot error
@@ -448,6 +454,19 @@ function placeSunGlyph(group, utcToday, utcTomorrow, p) {
 // that would desynchronize the marks from the ring's own 0% reference and
 // from the hour hand they share the dial with.
 function updateSunMarks(p) {
+  // No location established yet (or it failed) — hide all four
+  // location-dependent marks rather than draw them from a guess. Same
+  // display:none mechanism placeSunGlyph uses below for polar day/night.
+  if (locationStatus !== "located" && locationStatus !== "manual") {
+    markMidnight.setAttribute("display", "none");
+    markNoon.setAttribute("display", "none");
+    markSunrise.setAttribute("display", "none");
+    markSunset.setAttribute("display", "none");
+    return;
+  }
+  markMidnight.removeAttribute("display");
+  markNoon.removeAttribute("display");
+
   var fNoonToday = dayFractionOf(cachedToday.noon, cachedToday.offsetMin);
   var fNoonTomorrow = dayFractionOf(cachedTomorrow.noon, cachedTomorrow.offsetMin);
   var noonBlend = blendFraction(fNoonToday, fNoonTomorrow, p);
@@ -461,34 +480,53 @@ function updateSunMarks(p) {
 }
 
 function updateLocationInfo() {
-  var latDir = currentLat >= 0 ? "N" : "S";
-  var lonDir = currentLon >= 0 ? "E" : "W";
-  var text = Math.abs(currentLat).toFixed(2) + " " + latDir + ", "
-    + Math.abs(currentLon).toFixed(2) + " " + lonDir + " · " + tzName + " · " + locationStatus;
+  var text;
+  if (locationStatus === "located" || locationStatus === "manual") {
+    var latDir = currentLat >= 0 ? "N" : "S";
+    var lonDir = currentLon >= 0 ? "E" : "W";
+    text = Math.abs(currentLat).toFixed(2) + " " + latDir + ", "
+      + Math.abs(currentLon).toFixed(2) + " " + lonDir + " · " + tzName + " · " + locationStatus;
+  } else if (locationStatus === "locating") {
+    text = "Locating… · " + tzName;
+  } else {
+    text = "Location unavailable" + (locationFailureReason ? " (" + locationFailureReason + ")" : "") + " · " + tzName;
+  }
   document.getElementById("location-info").textContent = text;
 }
 
-var setupNow = new Date();
-refreshDayEventCache(setupNow);
-updateSunMarks((setupNow.getHours() + (setupNow.getMinutes() + setupNow.getSeconds() / 60) / 60) / 24);
+// No location yet — updateSunMarks() hides the four location-dependent
+// marks itself (locationStatus is still "locating"). Nothing is drawn from
+// a guessed or default position.
+updateSunMarks(0);
 updateLocationInfo();
 
 // Geolocation requires https or localhost; opening the file directly from
-// disk always falls back to the default coordinates, silently.
+// disk always falls back to "unavailable" (unsupported/blocked in that
+// context), which is reported, not silently swapped for a default.
 if (navigator.geolocation) {
   navigator.geolocation.getCurrentPosition(
     function(pos) {
       currentLat = pos.coords.latitude;
       currentLon = pos.coords.longitude;
       locationStatus = "located";
+      locationFailureReason = null;
       refreshDayEventCache();
       updateLocationInfo();
     },
-    function() {
-      // denied, unavailable, or timed out — keep the default silently
+    function(err) {
+      locationStatus = "unavailable";
+      locationFailureReason =
+        err && err.code === err.PERMISSION_DENIED ? "denied" :
+        err && err.code === err.POSITION_UNAVAILABLE ? "position unavailable" :
+        err && err.code === err.TIMEOUT ? "timeout" : "error";
+      updateLocationInfo();
     },
     { timeout: 5000, maximumAge: 300000 }
   );
+} else {
+  locationStatus = "unavailable";
+  locationFailureReason = "unsupported";
+  updateLocationInfo();
 }
 
 // --- Verification: none of this touches the live cachedToday/cachedTomorrow. ---
@@ -705,7 +743,8 @@ function tick() {
   var nowMs = Date.now();
   if (nowMs - lastSunMarksCheck >= 60000) {
     lastSunMarksCheck = nowMs;
-    if (now.toDateString() !== lastLocalDateStr) {
+    var haveLocation = locationStatus === "located" || locationStatus === "manual";
+    if (haveLocation && now.toDateString() !== lastLocalDateStr) {
       refreshDayEventCache(now);
     }
   }
