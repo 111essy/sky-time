@@ -24,6 +24,52 @@ svg {
   margin-top: 8px;
   text-align: center;
 }
+#city-search-container {
+  display: none;
+  margin-top: 8px;
+  text-align: center;
+}
+#city-search-input {
+  background: #111;
+  color: #eee;
+  border: 1px solid grey;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-family: sans-serif;
+  font-size: 12px;
+  width: 220px;
+}
+#city-search-results {
+  list-style: none;
+  margin: 4px auto 0;
+  padding: 0;
+  max-width: 260px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+#city-search-results li {
+  color: #ccc;
+  font-family: sans-serif;
+  font-size: 12px;
+  padding: 4px 8px;
+  cursor: pointer;
+  text-align: left;
+}
+#city-search-results li:hover {
+  background: #222;
+}
+#clear-location-btn {
+  display: none;
+  margin-top: 8px;
+  background: none;
+  border: 1px solid grey;
+  color: grey;
+  font-family: sans-serif;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
 </style>
 </head>
 <body>
@@ -67,6 +113,11 @@ svg {
 <circle cx="0" cy="0" r="7" fill="crimson" />
 </svg>
 <div id="location-info"></div>
+<div id="city-search-container">
+<input id="city-search-input" type="text" placeholder="Search for your city…" autocomplete="off" />
+<ul id="city-search-results"></ul>
+</div>
+<button id="clear-location-btn" type="button">Use device location instead</button>
 <script>
 var svgNS = "http://www.w3.org/2000/svg";
 var cx = 0, cy = 0;
@@ -369,22 +420,74 @@ var currentLon = null;
 // folded into the state itself.
 var locationStatus = "locating";
 var locationFailureReason = null;
+var manualCityLabel = null; // "City, Region, Country" for the manual-selection display
 
-// Local noon of the given date, as an absolute instant — deterministic
-// (unlike page-load time) and halves the one-pass declination/eot error
-// versus using midnight or "now". The Date constructor resolves y/m/d/h in
-// the runtime's own local zone, DST included, so this needs no manual
-// offset math, and d+1 rolls into next month/year correctly on its own.
+// null = follow the device's own local time zone (the "located" path: the
+// device is presumed to be where its GPS/wifi says it is). A specific IANA
+// name = a manually-selected city's zone, which may have nothing to do with
+// the device's own zone. This is the ONLY place that answer is decided.
+var displayTimeZone = null;
+
+// The single source of truth both the hour hand (tick(), below) and the
+// sun-event marks (computeDayEvents, below) read through — there is no
+// second path that could resolve a different zone for one than the other.
+// Native getTimezoneOffset() convention throughout: UTC minus local, in
+// minutes (e.g. -120 for CEST).
+function displayOffsetMinutes(instant) {
+  if (!displayTimeZone) return instant.getTimezoneOffset();
+  var inZone = new Date(instant.toLocaleString("en-US", { timeZone: displayTimeZone }));
+  var inUTC = new Date(instant.toLocaleString("en-US", { timeZone: "UTC" }));
+  return (inUTC - inZone) / 60000;
+}
+
+// Wall-clock date/time fields for `instant` as observed in the display
+// timezone (see displayOffsetMinutes above), computed by shifting the
+// instant by that offset and reading UTC getters on the result — sidesteps
+// any ambiguity from double timezone conversion.
+function displayWallClock(instant) {
+  var offsetMin = displayOffsetMinutes(instant);
+  var shifted = new Date(instant.getTime() - offsetMin * 60000);
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth(),
+    date: shifted.getUTCDate(),
+    hours: shifted.getUTCHours(),
+    minutes: shifted.getUTCMinutes(),
+    seconds: shifted.getUTCSeconds(),
+    milliseconds: shifted.getUTCMilliseconds(),
+    offsetMin: offsetMin
+  };
+}
+
+// Local noon (in the DISPLAY timezone) of the calendar day containing
+// refInstant, as an absolute instant. One offset refinement handles
+// DST-transition days to the same precision the rest of this file already
+// accepts. Used only by the live rendering path — see localNoon() below for
+// the test/fixture path, which must stay independent of displayTimeZone.
+function displayLocalNoon(refInstant) {
+  var wall = displayWallClock(refInstant);
+  var guess = new Date(Date.UTC(wall.year, wall.month, wall.date, 12, 0, 0, 0) + wall.offsetMin * 60000);
+  var refinedOffset = displayOffsetMinutes(guess);
+  return new Date(Date.UTC(wall.year, wall.month, wall.date, 12, 0, 0, 0) + refinedOffset * 60000);
+}
+
+// Local noon of the given date in the SYSTEM's own zone, as an absolute
+// instant. Deliberately independent of displayTimeZone: this is used only
+// by the verification/fixture blocks further down, which must keep testing
+// a fixed, predictable zone regardless of what city a user has selected —
+// see displayLocalNoon() above for the live-rendering equivalent.
 function localNoon(dateInDay) {
   return new Date(dateInDay.getFullYear(), dateInDay.getMonth(), dateInDay.getDate(), 12, 0, 0, 0);
 }
 
-// sunEvents() results for one local day, plus that day's own UTC offset
-// (needed since a DST transition can make today's and tomorrow's differ).
-function computeDayEvents(localNoonDate, lat, lon) {
-  var jd = localNoonDate.getTime() / 86400000 + 2440587.5;
+// sunEvents() results for one local day. offsetMin is passed in explicitly
+// (rather than derived internally) so this stays a pure function with no
+// hidden dependency on displayTimeZone or system time — callers decide
+// which offset convention applies.
+function computeDayEvents(noonInstant, offsetMin, lat, lon) {
+  var jd = noonInstant.getTime() / 86400000 + 2440587.5;
   var sun = sunEvents(jd, lat, lon);
-  return { offsetMin: localNoonDate.getTimezoneOffset(), sunrise: sun.sunrise, sunset: sun.sunset, noon: sun.noon };
+  return { offsetMin: offsetMin, sunrise: sun.sunrise, sunset: sun.sunset, noon: sun.noon };
 }
 
 function dayFractionOf(utcMinutes, offsetMin) {
@@ -407,11 +510,19 @@ function blendFraction(fA, fB, p) {
 var cachedToday, cachedTomorrow, lastLocalDateStr;
 var lastSunMarksCheck = 0;
 function refreshDayEventCache(refDate) {
-  var d = refDate || new Date();
-  cachedToday = computeDayEvents(localNoon(d), currentLat, currentLon);
-  var tomorrow = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 12, 0, 0, 0);
-  cachedTomorrow = computeDayEvents(tomorrow, currentLat, currentLon);
-  lastLocalDateStr = d.toDateString();
+  var ref = refDate || new Date();
+  var wall = displayWallClock(ref);
+
+  var todayNoon = displayLocalNoon(ref);
+  cachedToday = computeDayEvents(todayNoon, displayOffsetMinutes(todayNoon), currentLat, currentLon);
+
+  // Date.UTC with date+1 (not +24h) so a DST-transition day — which isn't
+  // 24h long — still rolls over to the correct next calendar day.
+  var tomorrowGuess = new Date(Date.UTC(wall.year, wall.month, wall.date + 1, 12, 0, 0, 0) + wall.offsetMin * 60000);
+  var tomorrowNoon = displayLocalNoon(tomorrowGuess);
+  cachedTomorrow = computeDayEvents(tomorrowNoon, displayOffsetMinutes(tomorrowNoon), currentLat, currentLon);
+
+  lastLocalDateStr = wall.year + "-" + wall.month + "-" + wall.date;
 }
 
 var markMidnight = document.getElementById("mark-solar-midnight");
@@ -481,23 +592,125 @@ function updateSunMarks(p) {
 
 function updateLocationInfo() {
   var text;
-  if (locationStatus === "located" || locationStatus === "manual") {
+  if (locationStatus === "manual") {
+    text = (manualCityLabel || "Selected city") + " · timezone: " + displayTimeZone + " · manual";
+  } else if (locationStatus === "located") {
     var latDir = currentLat >= 0 ? "N" : "S";
     var lonDir = currentLon >= 0 ? "E" : "W";
     text = Math.abs(currentLat).toFixed(2) + " " + latDir + ", "
-      + Math.abs(currentLon).toFixed(2) + " " + lonDir + " · " + tzName + " · " + locationStatus;
+      + Math.abs(currentLon).toFixed(2) + " " + lonDir + " · timezone: " + tzName + " · located";
   } else if (locationStatus === "locating") {
-    text = "Locating" + (locationFailureReason ? " (retrying after " + locationFailureReason + ")" : "…") + " · " + tzName;
+    text = "Locating" + (locationFailureReason ? " (retrying after " + locationFailureReason + ")" : "…");
   } else {
-    text = "Location unavailable" + (locationFailureReason ? " (" + locationFailureReason + ")" : "") + " · " + tzName;
+    text = "Location unavailable" + (locationFailureReason ? " (" + locationFailureReason + ")" : "");
   }
   document.getElementById("location-info").textContent = text;
+
+  // City search only makes sense once geolocation has actually failed; the
+  // clear/retry button only makes sense once a manual city is active.
+  document.getElementById("city-search-container").style.display = locationStatus === "unavailable" ? "block" : "none";
+  document.getElementById("clear-location-btn").style.display = locationStatus === "manual" ? "inline-block" : "none";
+  if (locationStatus !== "unavailable") {
+    document.getElementById("city-search-input").value = "";
+    document.getElementById("city-search-results").innerHTML = "";
+  }
 }
 
-// No location yet — updateSunMarks() hides the four location-dependent
-// marks itself (locationStatus is still "locating"). Nothing is drawn from
-// a guessed or default position.
-updateSunMarks(0);
+// Open-Meteo geocoding: keyless, CORS-enabled (access-control-allow-origin:
+// *, confirmed with an actual fetch from a file:// page before this was
+// built). The only network dependency in this file, and it is wired up
+// only here — nothing on the located/manual/locating paths ever calls it.
+var CITY_SEARCH_URL = "https://geocoding-api.open-meteo.com/v1/search";
+var MANUAL_LOCATION_STORAGE_KEY = "threeBodyClock.manualLocation";
+var citySearchDebounceTimer = null;
+
+function cityLabel(result) {
+  return result.name + (result.admin1 ? ", " + result.admin1 : "") + ", " + result.country;
+}
+
+function selectCity(result) {
+  currentLat = result.latitude;
+  currentLon = result.longitude;
+  displayTimeZone = result.timezone;
+  manualCityLabel = cityLabel(result);
+  locationStatus = "manual";
+  locationFailureReason = null;
+  try {
+    localStorage.setItem(MANUAL_LOCATION_STORAGE_KEY, JSON.stringify({
+      lat: currentLat, lon: currentLon, tz: displayTimeZone, label: manualCityLabel
+    }));
+  } catch (e) {
+    // storage unavailable (private browsing, quota) — selection still works this session
+  }
+  refreshDayEventCache();
+  updateLocationInfo();
+}
+
+document.getElementById("city-search-input").addEventListener("input", function(e) {
+  var query = e.target.value.trim();
+  clearTimeout(citySearchDebounceTimer);
+  var resultsEl = document.getElementById("city-search-results");
+  if (query.length < 2) {
+    resultsEl.innerHTML = "";
+    return;
+  }
+  citySearchDebounceTimer = setTimeout(function() {
+    fetch(CITY_SEARCH_URL + "?name=" + encodeURIComponent(query) + "&count=8&language=en&format=json")
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        resultsEl.innerHTML = "";
+        (data.results || []).forEach(function(result) {
+          var li = document.createElement("li");
+          li.textContent = cityLabel(result);
+          li.addEventListener("click", function() { selectCity(result); });
+          resultsEl.appendChild(li);
+        });
+      })
+      .catch(function() {
+        // network hiccup during search — leave the list as it was, no crash, no alert
+      });
+  }, 300);
+});
+
+document.getElementById("clear-location-btn").addEventListener("click", function() {
+  try { localStorage.removeItem(MANUAL_LOCATION_STORAGE_KEY); } catch (e) {}
+  currentLat = null;
+  currentLon = null;
+  displayTimeZone = null;
+  manualCityLabel = null;
+  locationStatus = "locating";
+  locationFailureReason = null;
+  geoAttempt = 0;
+  updateLocationInfo();
+  requestLocation();
+});
+
+function loadPersistedManualLocation() {
+  try {
+    var raw = localStorage.getItem(MANUAL_LOCATION_STORAGE_KEY);
+    if (!raw) return false;
+    var saved = JSON.parse(raw);
+    if (typeof saved.lat !== "number" || typeof saved.lon !== "number" || !saved.tz) return false;
+    currentLat = saved.lat;
+    currentLon = saved.lon;
+    displayTimeZone = saved.tz;
+    manualCityLabel = saved.label || null;
+    locationStatus = "manual";
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// A persisted manual city takes priority over geolocation entirely — if the
+// user picked one deliberately, don't second-guess it on every reload.
+// Otherwise updateSunMarks() hides the four location-dependent marks itself
+// (locationStatus is still "locating"); nothing is drawn from a guess.
+if (loadPersistedManualLocation()) {
+  refreshDayEventCache();
+} else {
+  updateSunMarks(0);
+}
 updateLocationInfo();
 
 // Geolocation requires https or localhost; opening the file directly from
@@ -512,6 +725,8 @@ function requestLocation() {
     function(pos) {
       currentLat = pos.coords.latitude;
       currentLon = pos.coords.longitude;
+      displayTimeZone = null; // device's own zone, not a leftover manual one
+      manualCityLabel = null;
       locationStatus = "located";
       locationFailureReason = null;
       refreshDayEventCache();
@@ -548,7 +763,10 @@ function requestLocation() {
   );
 }
 
-if (navigator.geolocation) {
+if (locationStatus === "manual") {
+  // Persisted city already loaded above — geolocation would only overwrite
+  // a deliberate choice with a guess.
+} else if (navigator.geolocation) {
   requestLocation();
 } else {
   locationStatus = "unavailable";
@@ -565,9 +783,10 @@ if (navigator.geolocation) {
   var maxDev = 0;
   for (var day = 0; day < 366; day++) {
     var simDate = new Date(2026, 0, 1 + day, day % 24, (day * 37) % 60, 0);
-    var evToday = computeDayEvents(localNoon(simDate), ROTTERDAM_LAT, ROTTERDAM_LON);
+    var todayNoon = localNoon(simDate);
+    var evToday = computeDayEvents(todayNoon, todayNoon.getTimezoneOffset(), ROTTERDAM_LAT, ROTTERDAM_LON);
     var tomorrowDate = new Date(simDate.getFullYear(), simDate.getMonth(), simDate.getDate() + 1, 12, 0, 0, 0);
-    var evTomorrow = computeDayEvents(tomorrowDate, ROTTERDAM_LAT, ROTTERDAM_LON);
+    var evTomorrow = computeDayEvents(tomorrowDate, tomorrowDate.getTimezoneOffset(), ROTTERDAM_LAT, ROTTERDAM_LON);
     var p = (simDate.getHours() + simDate.getMinutes() / 60) / 24;
     var fNoonT = dayFractionOf(evToday.noon, evToday.offsetMin);
     var fNoonM = dayFractionOf(evTomorrow.noon, evTomorrow.offsetMin);
@@ -622,9 +841,10 @@ function angularDelta(a, b) {
   for (var i = 0; i < 30; i++) {
     var dateStr = simDate.toDateString();
     if (dateStr !== simDateStr) {
-      simToday = computeDayEvents(localNoon(simDate), ROTTERDAM_LAT, ROTTERDAM_LON);
+      var todayNoon = localNoon(simDate);
+      simToday = computeDayEvents(todayNoon, todayNoon.getTimezoneOffset(), ROTTERDAM_LAT, ROTTERDAM_LON);
       var tmr = new Date(simDate.getFullYear(), simDate.getMonth(), simDate.getDate() + 1, 12, 0, 0, 0);
-      simTomorrow = computeDayEvents(tmr, ROTTERDAM_LAT, ROTTERDAM_LON);
+      simTomorrow = computeDayEvents(tmr, tmr.getTimezoneOffset(), ROTTERDAM_LAT, ROTTERDAM_LON);
       simDateStr = dateStr;
     }
     var p = (simDate.getHours() + (simDate.getMinutes() + simDate.getSeconds() / 60) / 60) / 24;
@@ -650,10 +870,47 @@ function angularDelta(a, b) {
 // 3. Solar noon in Rotterdam should read near 13:48 in summer and 12:48 in
 // winter — never 12:00 — since it's mean solar noon corrected by longitude
 // and the equation of time, not civil noon.
-console.log("Solar noon 2026-06-21 (summer):", minutesToLocalTime(
-  computeDayEvents(new Date(2026, 5, 21, 12, 0, 0, 0), ROTTERDAM_LAT, ROTTERDAM_LON).noon, 2));
-console.log("Solar noon 2025-12-21 (winter):", minutesToLocalTime(
-  computeDayEvents(new Date(2025, 11, 21, 12, 0, 0, 0), ROTTERDAM_LAT, ROTTERDAM_LON).noon, 1));
+(function() {
+  var summerNoon = new Date(2026, 5, 21, 12, 0, 0, 0);
+  var winterNoon = new Date(2025, 11, 21, 12, 0, 0, 0);
+  console.log("Solar noon 2026-06-21 (summer):", minutesToLocalTime(
+    computeDayEvents(summerNoon, summerNoon.getTimezoneOffset(), ROTTERDAM_LAT, ROTTERDAM_LON).noon, 2));
+  console.log("Solar noon 2025-12-21 (winter):", minutesToLocalTime(
+    computeDayEvents(winterNoon, winterNoon.getTimezoneOffset(), ROTTERDAM_LAT, ROTTERDAM_LON).noon, 1));
+})();
+
+// 4. The structural guarantee: the hour hand (via displayWallClock) and the
+// sun-event marks (via computeDayEvents, fed displayOffsetMinutes) must
+// resolve to the SAME offset for the same instant, in any timezone —
+// including a southern-hemisphere zone (opposite DST season) and a
+// half-hour-offset zone (Kathmandu, +05:45, not a whole number of hours).
+// This isn't a coincidence to verify after the fact: both call through
+// displayOffsetMinutes()/displayWallClock() and nothing else, so there is
+// no second code path left that could resolve a different zone for one
+// than the other — the check below confirms that wiring holds for each
+// zone, not that two independent implementations happen to agree.
+(function verifyHandMarksShareOffset() {
+  var savedTZ = displayTimeZone;
+  var zones = [
+    { tz: "Europe/Amsterdam", lat: 52.37, lon: 4.90 },
+    { tz: "Australia/Sydney", lat: -33.87, lon: 151.21 },  // southern hemisphere
+    { tz: "Asia/Kathmandu", lat: 27.70, lon: 85.32 },       // +05:45, half-hour offset
+    { tz: "America/St_Johns", lat: 47.56, lon: -52.71 }     // -03:30, half-hour offset
+  ];
+  var instant = new Date(Date.UTC(2026, 5, 15, 12, 0, 0, 0));
+  var allMatch = true;
+  zones.forEach(function(z) {
+    displayTimeZone = z.tz;
+    var handOffset = displayWallClock(instant).offsetMin;
+    var noonInstant = displayLocalNoon(instant);
+    var markOffset = computeDayEvents(noonInstant, displayOffsetMinutes(noonInstant), z.lat, z.lon).offsetMin;
+    var match = handOffset === markOffset;
+    if (!match) allMatch = false;
+    console.log("Hand/mark offset — " + z.tz + ": hand=" + handOffset + "min, mark=" + markOffset + "min, match=" + match);
+  });
+  displayTimeZone = savedTZ;
+  console.log("All zones' hand and marks agree on offset:", allMatch);
+})();
 
 var initK = fullMoonK(initJD);
 var initThisFM = ph(initK, 0.5);
@@ -745,12 +1002,22 @@ var handClockSecond = document.getElementById("hand-clock-second");
 
 function tick() {
   var now = new Date();
-  var secFraction = (now.getSeconds() + now.getMilliseconds() / 1000) / 60;
-  var minFraction = (now.getMinutes() + secFraction) / 60;
-  var hourFraction = (now.getHours() + minFraction) / 24;
+  var haveLocation = locationStatus === "located" || locationStatus === "manual";
+
+  // Single source of truth for both the hour ring and the sun-event marks
+  // (see displayOffsetMinutes/displayWallClock above) — also drives the
+  // 12-hour analog face, so the whole dial reads one consistent civil time
+  // rather than the ring and the clock face disagreeing with each other.
+  // Until a location is found or entered, civil time isn't meaningful yet
+  // (displayTimeZone would just be guessing at device-local), so all civil
+  // hands point straight up instead of ticking on an unearned assumption.
+  var wall = haveLocation ? displayWallClock(now) : null;
+  var secFraction = haveLocation ? (wall.seconds + wall.milliseconds / 1000) / 60 : 0;
+  var minFraction = haveLocation ? (wall.minutes + secFraction) / 60 : 0;
+  var hourFraction = haveLocation ? (wall.hours + minFraction) / 24 : 0;
   handHours.setAttribute("transform", "rotate(" + (hourFraction * 360) + ")");
 
-  var clockHourFraction = ((now.getHours() % 12) + minFraction) / 12;
+  var clockHourFraction = haveLocation ? ((wall.hours % 12) + minFraction) / 12 : 0;
   handClockHour.setAttribute("transform", "rotate(" + (clockHourFraction * 360) + ")");
   handClockMinute.setAttribute("transform", "rotate(" + (minFraction * 360) + ")");
   handClockSecond.setAttribute("transform", "rotate(" + (secFraction * 360) + ")");
@@ -766,13 +1033,16 @@ function tick() {
   updateSunMarks(hourFraction);
 
   // Only the cache behind that blend is throttled — checked once a minute,
-  // not every frame, and only refreshed on an actual date rollover.
+  // not every frame, and only refreshed on an actual date rollover (in the
+  // display timezone, via the same `wall` used for the hand above).
   var nowMs = Date.now();
   if (nowMs - lastSunMarksCheck >= 60000) {
     lastSunMarksCheck = nowMs;
-    var haveLocation = locationStatus === "located" || locationStatus === "manual";
-    if (haveLocation && now.toDateString() !== lastLocalDateStr) {
-      refreshDayEventCache(now);
+    if (haveLocation) {
+      var todayKey = wall.year + "-" + wall.month + "-" + wall.date;
+      if (todayKey !== lastLocalDateStr) {
+        refreshDayEventCache(now);
+      }
     }
   }
 
