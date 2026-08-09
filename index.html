@@ -138,11 +138,25 @@ function lunarPointerFraction(t) {
   return (((elong - 180) % 360 + 360) % 360) / 360;
 }
 
+// Meeus 22.2: mean obliquity of the ecliptic (degrees).
+function obliquity(jde) {
+  var T = (jde - 2451545.0) / 36525;
+  return 23.439291 - 0.0130042 * T - 0.00000016 * T * T + 0.000000504 * T * T * T;
+}
+
+// Wrap a degree value into -180..+180.
+function wrapTo180(deg) {
+  return ((deg % 360) + 540) % 360 - 180;
+}
+
 // Standard low-precision solar position (Meeus ch.25): mean longitude L0,
 // mean anomaly M, equation of centre C, then corrected for aberration and
 // nutation to get APPARENT longitude — the quantity the equinoxes and
 // solstices are actually defined against (worth ~0.0033 deg, ~5 min of time).
-function sunLongitude(jde) {
+// Tilting lambda by the obliquity (Meeus 22) gives declination and right
+// ascension; those plus L0 give the equation of time, all needed for
+// sunrise/sunset.
+function solarPosition(jde) {
   var T = (jde - 2451545.0) / 36525;
   var L0 = 280.46646 + 36000.76983 * T + 0.0003032 * T * T;
   var M = 357.52911 + 35999.05029 * T - 0.0001537 * T * T;
@@ -153,7 +167,31 @@ function sunLongitude(jde) {
   var trueLong = L0 + C;
   var Omega = 125.04 - 1934.136 * T;
   var lambda = trueLong - 0.00569 - 0.00478 * Math.sin(Omega * R);
-  return ((lambda % 360) + 360) % 360;
+  lambda = ((lambda % 360) + 360) % 360;
+
+  var eps = obliquity(jde);
+  var epsR = eps * R;
+  var lambdaR = lambda * R;
+
+  var declination = Math.asin(Math.sin(epsR) * Math.sin(lambdaR)) / R;
+  var rightAscension = Math.atan2(Math.cos(epsR) * Math.sin(lambdaR), Math.cos(lambdaR)) / R;
+  rightAscension = ((rightAscension % 360) + 360) % 360;
+
+  var eot = 4 * wrapTo180(L0 - 0.0057183 - rightAscension);
+
+  return {
+    lambda: lambda,
+    epsilon: eps,
+    declination: declination,
+    rightAscension: rightAscension,
+    eot: eot,
+    L0: L0
+  };
+}
+
+// Thin wrapper kept so solarPointerFraction/solarLongitudeCrossing don't change.
+function sunLongitude(jde) {
+  return solarPosition(jde).lambda;
 }
 
 // The solar ring IS longitude: no interpolation needed, exact everywhere.
@@ -183,6 +221,28 @@ function solarLongitudeCrossing(targetDeg, guessJD) {
     if (Math.abs(step) < 1 / 86400) break; // under a second
   }
   return jd;
+}
+
+// Sunrise, solar noon and sunset for a given day (jde, at or near 0h UT)
+// and location, all as minutes from UTC midnight. Standard sunrise equation
+// using the hour angle of the sun at the -0.833 deg altitude (accounts for
+// the sun's apparent radius and average atmospheric refraction). Returns
+// null sunrise/sunset when |cosH| > 1 — the sun never crosses that
+// altitude that day (polar day or polar night) — rather than throwing on
+// the domain error acos() would raise.
+function sunEvents(jde, latDeg, lonDegEast) {
+  var pos = solarPosition(jde);
+  var latR = latDeg * R;
+  var decR = pos.declination * R;
+  var cosH = (Math.sin(-0.833 * R) - Math.sin(latR) * Math.sin(decR)) / (Math.cos(latR) * Math.cos(decR));
+  var noon = 720 - 4 * lonDegEast - pos.eot;
+
+  if (Math.abs(cosH) > 1) {
+    return { sunrise: null, sunset: null, noon: noon };
+  }
+
+  var H = Math.acos(cosH) / R;
+  return { sunrise: noon - 4 * H, sunset: noon + 4 * H, noon: noon };
 }
 
 // Calendar year of the December solstice (longitude 270) at or before t
@@ -326,6 +386,28 @@ console.log("Verify @ JD " + verifyJD + " — apparent longitude:", sunLongitude
 
 console.log("Current lunar pointer fraction:", lunarPointerFraction(initJD).toFixed(4));
 console.log("Current solar pointer fraction:", solarPointerFraction(initJD).toFixed(4));
+
+var ROTTERDAM_LAT = 51.9225;
+var ROTTERDAM_LON = 4.47917;
+
+function minutesToLocalTime(minUTC, utcOffsetHours) {
+  var total = ((minUTC + utcOffsetHours * 60) % 1440 + 1440) % 1440;
+  var hh = Math.floor(total / 60);
+  var mm = Math.round(total % 60);
+  if (mm === 60) { mm = 0; hh = (hh + 1) % 24; }
+  return (hh < 10 ? "0" : "") + hh + ":" + (mm < 10 ? "0" : "") + mm;
+}
+
+[
+  { date: [2026, 8, 9], utcOffset: 2, expect: "06:17 / 21:18 CEST" },
+  { date: [2025, 12, 21], utcOffset: 1, expect: "08:48 / 16:33 CET" },
+  { date: [2026, 6, 21], utcOffset: 2, expect: "05:22 / 22:05 CEST" }
+].forEach(function(c) {
+  var jd = seedJD(c.date[0], c.date[1], c.date[2]);
+  var ev = sunEvents(jd, ROTTERDAM_LAT, ROTTERDAM_LON);
+  var got = minutesToLocalTime(ev.sunrise, c.utcOffset) + " / " + minutesToLocalTime(ev.sunset, c.utcOffset);
+  console.log("Sunrise/sunset " + c.date.join("-") + ":", got, " expect:", c.expect);
+});
 
 var handHours = document.getElementById("hand-hours");
 var handLunar = document.getElementById("hand-lunar");
