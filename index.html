@@ -20,6 +20,7 @@ body {
 <g id="hand-lunar">
 <line x1="0" y1="-205" x2="0" y2="-245.5" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 </g>
+<g id="sun-events"></g>
 <g id="hand-hours">
 <line x1="0" y1="-155" x2="0" y2="-195.5" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 </g>
@@ -41,6 +42,9 @@ body {
 <script>
 var svgNS = "http://www.w3.org/2000/svg";
 var cx = 0, cy = 0;
+
+var ROTTERDAM_LAT = 51.9225;
+var ROTTERDAM_LON = 4.47917;
 
 // Copied verbatim from files/calendar-mechanism.html (there named ph, not phJDE)
 var R = Math.PI / 180;
@@ -325,6 +329,47 @@ buildTicks("ticks-hours", 200, 24, 6, "white", "grey", 37.5);
 buildTicks("ticks-clock", 150, 60, 5, "white", "grey", 37.5);
 
 var initJD = Date.now() / 86400000 + 2440587.5;
+
+// Europe/Amsterdam's current UTC offset (DST-aware, via Intl), since the
+// sunrise/sunset marks are Rotterdam's local day, not the viewer's.
+function amsterdamOffsetMinutes(date) {
+  var ams = new Date(date.toLocaleString("en-US", { timeZone: "Europe/Amsterdam" }));
+  var utc = new Date(date.toLocaleString("en-US", { timeZone: "UTC" }));
+  return (ams - utc) / 60000;
+}
+
+// Recomputed once at load, not per animation frame — sunrise/sunset barely
+// move within a single day at this precision.
+(function() {
+  var offsetMin = amsterdamOffsetMinutes(new Date());
+  var sun = sunEvents(initJD, ROTTERDAM_LAT, ROTTERDAM_LON);
+  var group = document.getElementById("sun-events");
+  var markRadius = 180; // between the clock (150) and hour (200) rings
+  var glyphR = 12;
+
+  function dayFraction(utcMinutes) {
+    return ((utcMinutes + offsetMin) % 1440 + 1440) % 1440 / 1440;
+  }
+
+  function place(utcMinutes, color, label) {
+    if (utcMinutes === null) return;
+    var f = dayFraction(utcMinutes);
+    var angle = f * 2 * Math.PI;
+    var x = markRadius * Math.sin(angle);
+    var y = -markRadius * Math.cos(angle);
+    var circle = document.createElementNS(svgNS, "circle");
+    circle.setAttribute("cx", x);
+    circle.setAttribute("cy", y);
+    circle.setAttribute("r", glyphR);
+    circle.setAttribute("fill", color);
+    group.appendChild(circle);
+    console.log(label + " day fraction:", f.toFixed(4));
+  }
+
+  place(sun.sunrise, "yellow", "Sunrise");
+  place(sun.sunset, "white", "Sunset");
+})();
+
 var initK = fullMoonK(initJD);
 var initThisFM = ph(initK, 0.5);
 var initNextFM = ph(initK + 1, 0.5);
@@ -386,9 +431,6 @@ console.log("Verify @ JD " + verifyJD + " — apparent longitude:", sunLongitude
 
 console.log("Current lunar pointer fraction:", lunarPointerFraction(initJD).toFixed(4));
 console.log("Current solar pointer fraction:", solarPointerFraction(initJD).toFixed(4));
-
-var ROTTERDAM_LAT = 51.9225;
-var ROTTERDAM_LON = 4.47917;
 
 function minutesToLocalTime(minUTC, utcOffsetHours) {
   var total = ((minUTC + utcOffsetHours * 60) % 1440 + 1440) % 1440;
