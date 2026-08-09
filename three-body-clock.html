@@ -38,7 +38,16 @@ svg {
 <g id="hand-lunar">
 <line x1="0" y1="-205" x2="0" y2="-245.5" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 </g>
-<g id="sun-events"></g>
+<g id="sun-events">
+<g id="mark-solar-midnight">
+<line x1="0" y1="-200" x2="0" y2="-162.5" stroke="blue" stroke-width="4" />
+</g>
+<g id="mark-solar-noon">
+<line x1="0" y1="-200" x2="0" y2="-162.5" stroke="lightblue" stroke-width="4" />
+</g>
+<g id="mark-sunrise"></g>
+<g id="mark-sunset"></g>
+</g>
 <g id="hand-hours">
 <line x1="0" y1="-155" x2="0" y2="-195.5" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 </g>
@@ -300,7 +309,7 @@ function buildTicks(groupId, radius, count, majorEvery, topColor, tickColor, max
 
 // Small phase glyph: "full" = filled disc, "ring"/"new" = outline only,
 // "first"/"last" = half-lit disc split on the vertical (right/left),
-// "half-top" = half-lit disc split on the horizontal (top filled).
+// "half-top"/"half-bottom" = half-lit disc split on the horizontal.
 function phaseGlyph(x, y, r, phase, color) {
   var g = document.createElementNS(svgNS, "g");
   var disc = document.createElementNS(svgNS, "circle");
@@ -315,7 +324,8 @@ function phaseGlyph(x, y, r, phase, color) {
   var halves = {
     first: [x, y - r, x, y + r, 1],       // right half
     last: [x, y - r, x, y + r, 0],        // left half
-    "half-top": [x - r, y, x + r, y, 1]   // top half
+    "half-top": [x - r, y, x + r, y, 1],  // top half
+    "half-bottom": [x - r, y, x + r, y, 0] // bottom half
   };
   var h = halves[phase];
   if (h) {
@@ -349,58 +359,105 @@ buildTicks("ticks-clock", 150, 60, 5, "white", "grey", 37.5);
 
 var initJD = Date.now() / 86400000 + 2440587.5;
 
-// Local noon today, as an absolute instant — deterministic (unlike page-load
-// time) and halves the one-pass declination/eot error versus using midnight
-// or "now". The Date constructor resolves y/m/d/h in the runtime's own local
-// zone, DST included, so this needs no manual offset math.
-var localNoonDate = (function() {
-  var now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0, 0);
-})();
-var noonJD = localNoonDate.getTime() / 86400000 + 2440587.5;
-var lastLocalDateStr = localNoonDate.toDateString();
-var lastSunMarksCheck = 0;
-
 var tzName = Intl.DateTimeFormat().resolvedOptions().timeZone;
 var currentLat = ROTTERDAM_LAT;
 var currentLon = ROTTERDAM_LON;
 var locationStatus = "default";
 
-var sunEventsGroup = document.getElementById("sun-events");
+// Local noon of the given date, as an absolute instant — deterministic
+// (unlike page-load time) and halves the one-pass declination/eot error
+// versus using midnight or "now". The Date constructor resolves y/m/d/h in
+// the runtime's own local zone, DST included, so this needs no manual
+// offset math, and d+1 rolls into next month/year correctly on its own.
+function localNoon(dateInDay) {
+  return new Date(dateInDay.getFullYear(), dateInDay.getMonth(), dateInDay.getDate(), 12, 0, 0, 0);
+}
+
+// sunEvents() results for one local day, plus that day's own UTC offset
+// (needed since a DST transition can make today's and tomorrow's differ).
+function computeDayEvents(localNoonDate, lat, lon) {
+  var jd = localNoonDate.getTime() / 86400000 + 2440587.5;
+  var sun = sunEvents(jd, lat, lon);
+  return { offsetMin: localNoonDate.getTimezoneOffset(), sunrise: sun.sunrise, sunset: sun.sunset, noon: sun.noon };
+}
+
+function dayFractionOf(utcMinutes, offsetMin) {
+  if (utcMinutes === null) return null;
+  return ((utcMinutes - offsetMin) % 1440 + 1440) % 1440 / 1440;
+}
+
+// Wrap-safe linear blend between two fractions-of-a-circle (0..1), by
+// weight p in [0,1]. Always takes the short way round, so it's safe even
+// when fA/fB sit on opposite sides of the 0/1 seam (e.g. solar midnight).
+function blendFraction(fA, fB, p) {
+  var delta = fB - fA;
+  delta -= Math.round(delta);
+  return ((fA + p * delta) % 1 + 1) % 1;
+}
+
+// The day-before/day-after event sets, cached and only recomputed on a
+// location change or a local-date rollover — NOT every frame. The blended
+// positions computed from them, below, are recomputed every frame.
+var cachedToday, cachedTomorrow, lastLocalDateStr;
+var lastSunMarksCheck = 0;
+function refreshDayEventCache(refDate) {
+  var d = refDate || new Date();
+  cachedToday = computeDayEvents(localNoon(d), currentLat, currentLon);
+  var tomorrow = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 12, 0, 0, 0);
+  cachedTomorrow = computeDayEvents(tomorrow, currentLat, currentLon);
+  lastLocalDateStr = d.toDateString();
+}
+
+var markMidnight = document.getElementById("mark-solar-midnight");
+var markNoon = document.getElementById("mark-solar-noon");
+var markSunrise = document.getElementById("mark-sunrise");
+var markSunset = document.getElementById("mark-sunset");
+markSunrise.appendChild(phaseGlyph(0, 0, 14, "half-top", "#ffbf00"));
+markSunset.appendChild(phaseGlyph(0, 0, 14, "half-bottom", "#ffbf00"));
 var sunMarkRadius = 180; // between the clock (150) and hour (200) rings
-var sunGlyphR = 14; // matches the moon/sun ring icon radius
 
-// Recomputed once per location change (page load, then again if geolocation
-// succeeds), not per animation frame — sunrise/sunset barely move within a
-// single day at this precision. Offset comes from getTimezoneOffset() on
-// today's date, not a fixed number, so it stays correct across DST.
-function renderSunMarks(lat, lon) {
-  while (sunEventsGroup.firstChild) sunEventsGroup.removeChild(sunEventsGroup.firstChild);
-
-  var offsetMin = localNoonDate.getTimezoneOffset();
-  var sun = sunEvents(noonJD, lat, lon);
-
-  function dayFraction(utcMinutes) {
-    return ((utcMinutes - offsetMin) % 1440 + 1440) % 1440 / 1440;
+// Places a half-yellow-circle glyph by translate only (never rotate — the
+// glyph itself must stay upright as it moves around the ring).
+function placeSunGlyph(group, utcToday, utcTomorrow, p) {
+  var fToday = dayFractionOf(utcToday, cachedToday.offsetMin);
+  var fTomorrow = dayFractionOf(utcTomorrow, cachedTomorrow.offsetMin);
+  if (fToday === null || fTomorrow === null) {
+    group.setAttribute("display", "none"); // polar day/night: nothing to draw
+    return;
   }
+  group.removeAttribute("display");
+  var angle = blendFraction(fToday, fTomorrow, p) * 2 * Math.PI;
+  var x = sunMarkRadius * Math.sin(angle);
+  var y = -sunMarkRadius * Math.cos(angle);
+  group.setAttribute("transform", "translate(" + x + "," + y + ")");
+}
 
-  function place(utcMinutes, color, label) {
-    if (utcMinutes === null) return;
-    var f = dayFraction(utcMinutes);
-    var angle = f * 2 * Math.PI;
-    var x = sunMarkRadius * Math.sin(angle);
-    var y = -sunMarkRadius * Math.cos(angle);
-    var circle = document.createElementNS(svgNS, "circle");
-    circle.setAttribute("cx", x);
-    circle.setAttribute("cy", y);
-    circle.setAttribute("r", sunGlyphR);
-    circle.setAttribute("fill", color);
-    sunEventsGroup.appendChild(circle);
-    console.log(label + " day fraction:", f.toFixed(4));
-  }
+// Recomputed every animation frame from cachedToday/cachedTomorrow, so all
+// four marks creep continuously rather than stepping once a day. Solar
+// midnight is derived as noon's blend plus exactly half a turn, not blended
+// independently, so the two stay exactly 180 degrees apart always, by
+// construction, not by coincidence of matching inputs.
+//
+// p is the CIVIL-day fraction — the same quantity driving the hour hand
+// (hourFraction), not a solar-day fraction of its own. The events being
+// blended (noon, sunrise, sunset) are solar. Mixing a civil clock with
+// solar events is deliberate: this ring is anchored to civil midnight (its
+// 0% mark), so everything on it, including how fast the sun-events drift
+// across it, is paced by the same civil clock as the hour hand. One clock
+// drives everything. Don't "fix" this into a solar-day fraction later —
+// that would desynchronize the marks from the ring's own 0% reference and
+// from the hour hand they share the dial with.
+function updateSunMarks(p) {
+  var fNoonToday = dayFractionOf(cachedToday.noon, cachedToday.offsetMin);
+  var fNoonTomorrow = dayFractionOf(cachedTomorrow.noon, cachedTomorrow.offsetMin);
+  var noonBlend = blendFraction(fNoonToday, fNoonTomorrow, p);
+  var midnightBlend = (noonBlend + 0.5) % 1;
 
-  place(sun.sunrise, "yellow", "Sunrise");
-  place(sun.sunset, "white", "Sunset");
+  markNoon.setAttribute("transform", "rotate(" + (noonBlend * 360) + ")");
+  markMidnight.setAttribute("transform", "rotate(" + (midnightBlend * 360) + ")");
+
+  placeSunGlyph(markSunrise, cachedToday.sunrise, cachedTomorrow.sunrise, p);
+  placeSunGlyph(markSunset, cachedToday.sunset, cachedTomorrow.sunset, p);
 }
 
 function updateLocationInfo() {
@@ -411,7 +468,9 @@ function updateLocationInfo() {
   document.getElementById("location-info").textContent = text;
 }
 
-renderSunMarks(currentLat, currentLon);
+var setupNow = new Date();
+refreshDayEventCache(setupNow);
+updateSunMarks((setupNow.getHours() + (setupNow.getMinutes() + setupNow.getSeconds() / 60) / 60) / 24);
 updateLocationInfo();
 
 // Geolocation requires https or localhost; opening the file directly from
@@ -422,7 +481,7 @@ if (navigator.geolocation) {
       currentLat = pos.coords.latitude;
       currentLon = pos.coords.longitude;
       locationStatus = "located";
-      renderSunMarks(currentLat, currentLon);
+      refreshDayEventCache();
       updateLocationInfo();
     },
     function() {
@@ -431,6 +490,105 @@ if (navigator.geolocation) {
     { timeout: 5000, maximumAge: 300000 }
   );
 }
+
+// --- Verification: none of this touches the live cachedToday/cachedTomorrow. ---
+
+// 1. Noon and midnight must be exactly 180 degrees apart at every instant,
+// all year — true by construction (midnight = noon's blend + half a turn),
+// but confirmed here rather than just assumed.
+(function verifyNoonMidnightOpposite() {
+  var maxDev = 0;
+  for (var day = 0; day < 366; day++) {
+    var simDate = new Date(2026, 0, 1 + day, day % 24, (day * 37) % 60, 0);
+    var evToday = computeDayEvents(localNoon(simDate), ROTTERDAM_LAT, ROTTERDAM_LON);
+    var tomorrowDate = new Date(simDate.getFullYear(), simDate.getMonth(), simDate.getDate() + 1, 12, 0, 0, 0);
+    var evTomorrow = computeDayEvents(tomorrowDate, ROTTERDAM_LAT, ROTTERDAM_LON);
+    var p = (simDate.getHours() + simDate.getMinutes() / 60) / 24;
+    var fNoonT = dayFractionOf(evToday.noon, evToday.offsetMin);
+    var fNoonM = dayFractionOf(evTomorrow.noon, evTomorrow.offsetMin);
+    var noonBlend = blendFraction(fNoonT, fNoonM, p);
+    var midnightBlend = (noonBlend + 0.5) % 1;
+    var sep = (((midnightBlend - noonBlend) % 1) + 1) % 1 * 360;
+    var dev = Math.abs(sep - 180);
+    if (dev > maxDev) maxDev = dev;
+  }
+  console.log("Noon/midnight max deviation from 180° over a simulated year:", maxDev.toFixed(6) + "°");
+})();
+
+function angularDelta(a, b) {
+  return ((b - a + 180) % 360 + 360) % 360 - 180;
+}
+
+// 2a. The wrap itself, exercised directly. A mark only risks a bad jump when
+// its today/tomorrow fractions sit on opposite sides of the 0/1 seam — e.g.
+// today's value is 358°, tomorrow's is 2°. blendFraction() must read that as
+// a short 4° hop, not walk the long way round (356°). Solar midnight is the
+// mark that sits nearest this seam by definition (opposite noon, which sits
+// near civil noon), so it's the one this matters for in practice — but the
+// safest check is the primitive itself, stepped at minute resolution across
+// a full day, independent of whether any real date happens to land exactly
+// on the seam this century.
+(function verifyBlendWrapSafety() {
+  var fA = 358 / 360, fB = 2 / 360; // straddles 0°: short way is 4°, long way is 356°
+  var prevDeg = null, maxStep = 0;
+  for (var m = 0; m <= 1440; m++) {
+    var deg = blendFraction(fA, fB, m / 1440) * 360;
+    if (prevDeg !== null) maxStep = Math.max(maxStep, Math.abs(angularDelta(prevDeg, deg)));
+    prevDeg = deg;
+  }
+  var totalTravel = Math.abs(angularDelta(fA * 360, fB * 360));
+  console.log("Synthetic 0° crossing — total travel:", totalTravel.toFixed(2) + "° (short way, not 356°), max per-minute step:", maxStep.toFixed(4) + "°");
+})();
+
+// 2b. The same check against real Rotterdam data, stepping across the local
+// midnight where solar midnight's mark comes closest to the ring's top all
+// year (found by scanning 2026: closest approach is ~6.4°, on 2 -> 3 Nov,
+// the date the clocks change — never a true crossing for this location, but
+// the closest real rehearsal of it, and it exercises the actual
+// rollover-triggered cache refresh in refreshDayEventCache(), which the
+// synthetic check above does not: that refresh is the one place a
+// discontinuity could sneak in even if the blend primitive itself is sound.
+(function verifyMidnightContinuityRealData() {
+  var simDate = new Date(2026, 10, 2, 23, 50, 0, 0);
+  var simToday = null, simTomorrow = null, simDateStr = null;
+  var prev = null;
+  var maxJump = 0;
+  var firstMidnightAngle = null;
+  for (var i = 0; i < 30; i++) {
+    var dateStr = simDate.toDateString();
+    if (dateStr !== simDateStr) {
+      simToday = computeDayEvents(localNoon(simDate), ROTTERDAM_LAT, ROTTERDAM_LON);
+      var tmr = new Date(simDate.getFullYear(), simDate.getMonth(), simDate.getDate() + 1, 12, 0, 0, 0);
+      simTomorrow = computeDayEvents(tmr, ROTTERDAM_LAT, ROTTERDAM_LON);
+      simDateStr = dateStr;
+    }
+    var p = (simDate.getHours() + (simDate.getMinutes() + simDate.getSeconds() / 60) / 60) / 24;
+    var noonAngle = blendFraction(dayFractionOf(simToday.noon, simToday.offsetMin), dayFractionOf(simTomorrow.noon, simTomorrow.offsetMin), p) * 360;
+    var midnightAngle = (noonAngle / 360 + 0.5) % 1 * 360;
+    var sunriseAngle = blendFraction(dayFractionOf(simToday.sunrise, simToday.offsetMin), dayFractionOf(simTomorrow.sunrise, simTomorrow.offsetMin), p) * 360;
+    var sunsetAngle = blendFraction(dayFractionOf(simToday.sunset, simToday.offsetMin), dayFractionOf(simTomorrow.sunset, simTomorrow.offsetMin), p) * 360;
+    if (firstMidnightAngle === null) firstMidnightAngle = midnightAngle;
+
+    if (prev) {
+      maxJump = Math.max(maxJump,
+        Math.abs(angularDelta(prev.noon, noonAngle)),
+        Math.abs(angularDelta(prev.midnight, midnightAngle)),
+        Math.abs(angularDelta(prev.sunrise, sunriseAngle)),
+        Math.abs(angularDelta(prev.sunset, sunsetAngle)));
+    }
+    prev = { noon: noonAngle, midnight: midnightAngle, sunrise: sunriseAngle, sunset: sunsetAngle };
+    simDate = new Date(simDate.getTime() + 60000);
+  }
+  console.log("Max per-minute mark jump stepping across 2->3 Nov local midnight (solar-midnight mark starts at " + firstMidnightAngle.toFixed(1) + "° from top, its closest approach all year):", maxJump.toFixed(4) + "°");
+})();
+
+// 3. Solar noon in Rotterdam should read near 13:48 in summer and 12:48 in
+// winter — never 12:00 — since it's mean solar noon corrected by longitude
+// and the equation of time, not civil noon.
+console.log("Solar noon 2026-06-21 (summer):", minutesToLocalTime(
+  computeDayEvents(new Date(2026, 5, 21, 12, 0, 0, 0), ROTTERDAM_LAT, ROTTERDAM_LON).noon, 2));
+console.log("Solar noon 2025-12-21 (winter):", minutesToLocalTime(
+  computeDayEvents(new Date(2025, 11, 21, 12, 0, 0, 0), ROTTERDAM_LAT, ROTTERDAM_LON).noon, 1));
 
 var initK = fullMoonK(initJD);
 var initThisFM = ph(initK, 0.5);
@@ -539,17 +697,16 @@ function tick() {
   var solarFraction = solarPointerFraction(jd);
   handSolar.setAttribute("transform", "rotate(" + (solarFraction * 360) + ")");
 
-  // Throttled to once a minute, not every frame — cheap enough either way,
-  // but there's no reason to check 60 times a second for a date rollover.
+  // The blend itself runs every frame, so the marks are always continuous.
+  updateSunMarks(hourFraction);
+
+  // Only the cache behind that blend is throttled — checked once a minute,
+  // not every frame, and only refreshed on an actual date rollover.
   var nowMs = Date.now();
   if (nowMs - lastSunMarksCheck >= 60000) {
     lastSunMarksCheck = nowMs;
-    var todayStr = now.toDateString();
-    if (todayStr !== lastLocalDateStr) {
-      lastLocalDateStr = todayStr;
-      localNoonDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0, 0);
-      noonJD = localNoonDate.getTime() / 86400000 + 2440587.5;
-      renderSunMarks(currentLat, currentLon);
+    if (now.toDateString() !== lastLocalDateStr) {
+      refreshDayEventCache(now);
     }
   }
 

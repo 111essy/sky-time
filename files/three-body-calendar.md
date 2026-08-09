@@ -28,6 +28,8 @@ Every rhythm in this calendar arises from the mutual gravitation of three masses
 
 **The federation principle.** The sun and moon tracks are sovereign and independent. Moons straddle quarter boundaries freely; the year never waits for the moon; the moon is never cut by the year. Every day therefore carries a dual address, like "Tuesday the 4th" — one coordinate from each track, related but unsubordinated.
 
+**Nothing in the machine steps.** Every quantity moves continuously, because the sky does. Any implementation that recomputes on a date rollover, resets on reload, or advances in discrete units is wrong regardless of how small the step is.
+
 ---
 
 ## Part II — The Address
