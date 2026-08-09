@@ -345,7 +345,7 @@ function amsterdamOffsetMinutes(date) {
   var sun = sunEvents(initJD, ROTTERDAM_LAT, ROTTERDAM_LON);
   var group = document.getElementById("sun-events");
   var markRadius = 180; // between the clock (150) and hour (200) rings
-  var glyphR = 12;
+  var glyphR = 14; // matches the moon/sun ring icon radius
 
   function dayFraction(utcMinutes) {
     return ((utcMinutes + offsetMin) % 1440 + 1440) % 1440 / 1440;
