@@ -487,7 +487,7 @@ function updateLocationInfo() {
     text = Math.abs(currentLat).toFixed(2) + " " + latDir + ", "
       + Math.abs(currentLon).toFixed(2) + " " + lonDir + " · " + tzName + " · " + locationStatus;
   } else if (locationStatus === "locating") {
-    text = "Locating… · " + tzName;
+    text = "Locating" + (locationFailureReason ? " (retrying after " + locationFailureReason + ")" : "…") + " · " + tzName;
   } else {
     text = "Location unavailable" + (locationFailureReason ? " (" + locationFailureReason + ")" : "") + " · " + tzName;
   }
@@ -503,7 +503,11 @@ updateLocationInfo();
 // Geolocation requires https or localhost; opening the file directly from
 // disk always falls back to "unavailable" (unsupported/blocked in that
 // context), which is reported, not silently swapped for a default.
-if (navigator.geolocation) {
+var GEO_MAX_ATTEMPTS = 3;
+var geoAttempt = 0;
+
+function requestLocation() {
+  geoAttempt++;
   navigator.geolocation.getCurrentPosition(
     function(pos) {
       currentLat = pos.coords.latitude;
@@ -514,15 +518,38 @@ if (navigator.geolocation) {
       updateLocationInfo();
     },
     function(err) {
-      locationStatus = "unavailable";
-      locationFailureReason =
-        err && err.code === err.PERMISSION_DENIED ? "denied" :
-        err && err.code === err.POSITION_UNAVAILABLE ? "position unavailable" :
-        err && err.code === err.TIMEOUT ? "timeout" : "error";
-      updateLocationInfo();
+      var code = err && err.code;
+
+      // PERMISSION_DENIED: the browser will not re-prompt this session, so
+      // retrying is pointless — go straight to unavailable.
+      if (code === 1) {
+        locationStatus = "unavailable";
+        locationFailureReason = "denied";
+        updateLocationInfo();
+        return;
+      }
+
+      // POSITION_UNAVAILABLE (2) or TIMEOUT (3): transient, worth retrying
+      // with backoff, up to GEO_MAX_ATTEMPTS total attempts.
+      var reason = code === 3 ? "timeout" : "position unavailable";
+      locationFailureReason = reason; // visible even mid-retry, not just on final failure
+      if (geoAttempt < GEO_MAX_ATTEMPTS) {
+        updateLocationInfo();
+        setTimeout(requestLocation, 1000 * Math.pow(2, geoAttempt - 1)); // 1s, 2s
+      } else {
+        locationStatus = "unavailable";
+        updateLocationInfo();
+      }
     },
-    { timeout: 5000, maximumAge: 300000 }
+    // High accuracy is deliberately off: we need longitude, not metres — a
+    // 100km position error moves solar noon by under 6 minutes — so the
+    // fast, low-power path is the right one, not GPS-grade precision.
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 }
   );
+}
+
+if (navigator.geolocation) {
+  requestLocation();
 } else {
   locationStatus = "unavailable";
   locationFailureReason = "unsupported";
