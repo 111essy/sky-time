@@ -5,17 +5,29 @@
 <style>
 body {
   background: black;
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+svg {
+  display: block;
+  width: 90vmin;
+  height: 90vmin;
 }
 #location-info {
   color: grey;
   font-family: sans-serif;
   font-size: 12px;
   margin-top: 8px;
+  text-align: center;
 }
 </style>
 </head>
 <body>
-<svg viewBox="-420 -420 840 840" style="max-width: 382.5px;">
+<svg viewBox="-420 -420 840 840">
 <circle cx="0" cy="0" r="200" fill="none" stroke="grey" stroke-width="2" />
 <circle cx="0" cy="0" r="250" fill="none" stroke="grey" stroke-width="2" />
 <circle cx="0" cy="0" r="300" fill="none" stroke="grey" stroke-width="2" />
