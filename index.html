@@ -179,43 +179,30 @@ function buildTicks(groupId, radius, count, majorEvery, topColor, tickColor, max
   }
 }
 
-function buildPhaseTicks(groupId, radius, fractions, topColor, tickColor, maxLen) {
-  var group = document.getElementById(groupId);
-  var lenMajor = maxLen ? Math.min(radius * 0.3, maxLen) : radius * 0.3;
-  var edge = cy - radius;
-  var inner = edge + lenMajor;
-
-  fractions.forEach(function(f, i) {
-    var tick = document.createElementNS(svgNS, "line");
-    tick.setAttribute("x1", cx);
-    tick.setAttribute("y1", edge);
-    tick.setAttribute("x2", cx);
-    tick.setAttribute("y2", inner);
-    tick.setAttribute("stroke", i === 0 ? topColor : tickColor);
-    tick.setAttribute("stroke-width", "4");
-    tick.setAttribute("transform", "rotate(" + (f * 360) + ")");
-    group.appendChild(tick);
-  });
-}
-
-// Small moon-phase glyph: full = filled disc, new = outline only,
-// first/last quarter = half-lit disc (right/left, matching real orientation).
-function moonIcon(x, y, r, phase) {
+// Small phase glyph: "full" = filled disc, "ring"/"new" = outline only,
+// "first"/"last" = half-lit disc split on the vertical (right/left),
+// "half-top" = half-lit disc split on the horizontal (top filled).
+function phaseGlyph(x, y, r, phase, color) {
   var g = document.createElementNS(svgNS, "g");
   var disc = document.createElementNS(svgNS, "circle");
   disc.setAttribute("cx", x);
   disc.setAttribute("cy", y);
   disc.setAttribute("r", r);
-  disc.setAttribute("fill", phase === "full" ? "white" : "none");
-  disc.setAttribute("stroke", "white");
+  disc.setAttribute("fill", phase === "full" ? color : "none");
+  disc.setAttribute("stroke", color);
   disc.setAttribute("stroke-width", "2");
   g.appendChild(disc);
 
-  if (phase === "first" || phase === "last") {
-    var sweep = phase === "first" ? 1 : 0;
+  var halves = {
+    first: [x, y - r, x, y + r, 1],       // right half
+    last: [x, y - r, x, y + r, 0],        // left half
+    "half-top": [x - r, y, x + r, y, 1]   // top half
+  };
+  var h = halves[phase];
+  if (h) {
     var half = document.createElementNS(svgNS, "path");
-    half.setAttribute("d", "M " + x + " " + (y - r) + " A " + r + " " + r + " 0 0 " + sweep + " " + x + " " + (y + r) + " Z");
-    half.setAttribute("fill", "white");
+    half.setAttribute("d", "M " + h[0] + " " + h[1] + " A " + r + " " + r + " 0 0 " + h[4] + " " + h[2] + " " + h[3] + " Z");
+    half.setAttribute("fill", color);
     g.appendChild(half);
   }
 
@@ -224,10 +211,18 @@ function moonIcon(x, y, r, phase) {
 
 function buildMoonPhaseMarks(groupId, radius, iconR) {
   var group = document.getElementById(groupId);
-  group.appendChild(moonIcon(0, -radius, iconR, "full"));
-  group.appendChild(moonIcon(radius, 0, iconR, "last"));
-  group.appendChild(moonIcon(0, radius, iconR, "new"));
-  group.appendChild(moonIcon(-radius, 0, iconR, "first"));
+  group.appendChild(phaseGlyph(0, -radius, iconR, "full", "white"));
+  group.appendChild(phaseGlyph(radius, 0, iconR, "last", "white"));
+  group.appendChild(phaseGlyph(0, radius, iconR, "new", "white"));
+  group.appendChild(phaseGlyph(-radius, 0, iconR, "first", "white"));
+}
+
+function buildSunPhaseMarks(groupId, radius, iconR) {
+  var group = document.getElementById(groupId);
+  group.appendChild(phaseGlyph(0, -radius, iconR, "ring", "yellow"));
+  group.appendChild(phaseGlyph(radius, 0, iconR, "half-top", "yellow"));
+  group.appendChild(phaseGlyph(0, radius, iconR, "full", "yellow"));
+  group.appendChild(phaseGlyph(-radius, 0, iconR, "half-top", "yellow"));
 }
 
 buildTicks("ticks-hours", 200, 24, 6, "white", "grey", 37.5);
@@ -266,7 +261,7 @@ var fMarEq = (initMarEq - initThisSol) / initYearLen;
 var fJunSol = (initJunSol - initThisSol) / initYearLen;
 var fSepEq = (initSepEq - initThisSol) / initYearLen;
 
-buildPhaseTicks("ticks-solar", 300, [0, 0.25, 0.5, 0.75], "white", "grey", 37.5);
+buildSunPhaseMarks("ticks-solar", 281, 14);
 
 var winterDeg = fMarEq * 360;
 var springDeg = (fJunSol - fMarEq) * 360;
