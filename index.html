@@ -6,6 +6,12 @@
 body {
   background: black;
 }
+#location-info {
+  color: grey;
+  font-family: sans-serif;
+  font-size: 12px;
+  margin-top: 8px;
+}
 </style>
 </head>
 <body>
@@ -39,6 +45,7 @@ body {
 </g>
 <circle cx="0" cy="0" r="7" fill="crimson" />
 </svg>
+<div id="location-info"></div>
 <script>
 var svgNS = "http://www.w3.org/2000/svg";
 var cx = 0, cy = 0;
@@ -330,45 +337,86 @@ buildTicks("ticks-clock", 150, 60, 5, "white", "grey", 37.5);
 
 var initJD = Date.now() / 86400000 + 2440587.5;
 
-// Europe/Amsterdam's current UTC offset (DST-aware, via Intl), since the
-// sunrise/sunset marks are Rotterdam's local day, not the viewer's.
-function amsterdamOffsetMinutes(date) {
-  var ams = new Date(date.toLocaleString("en-US", { timeZone: "Europe/Amsterdam" }));
-  var utc = new Date(date.toLocaleString("en-US", { timeZone: "UTC" }));
-  return (ams - utc) / 60000;
-}
+// Local noon today, as an absolute instant — deterministic (unlike page-load
+// time) and halves the one-pass declination/eot error versus using midnight
+// or "now". The Date constructor resolves y/m/d/h in the runtime's own local
+// zone, DST included, so this needs no manual offset math.
+var localNoonDate = (function() {
+  var now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0, 0);
+})();
+var noonJD = localNoonDate.getTime() / 86400000 + 2440587.5;
 
-// Recomputed once at load, not per animation frame — sunrise/sunset barely
-// move within a single day at this precision.
-(function() {
-  var offsetMin = amsterdamOffsetMinutes(new Date());
-  var sun = sunEvents(initJD, ROTTERDAM_LAT, ROTTERDAM_LON);
-  var group = document.getElementById("sun-events");
-  var markRadius = 180; // between the clock (150) and hour (200) rings
-  var glyphR = 14; // matches the moon/sun ring icon radius
+var tzName = Intl.DateTimeFormat().resolvedOptions().timeZone;
+var currentLat = ROTTERDAM_LAT;
+var currentLon = ROTTERDAM_LON;
+var locationStatus = "default";
+
+var sunEventsGroup = document.getElementById("sun-events");
+var sunMarkRadius = 180; // between the clock (150) and hour (200) rings
+var sunGlyphR = 14; // matches the moon/sun ring icon radius
+
+// Recomputed once per location change (page load, then again if geolocation
+// succeeds), not per animation frame — sunrise/sunset barely move within a
+// single day at this precision. Offset comes from getTimezoneOffset() on
+// today's date, not a fixed number, so it stays correct across DST.
+function renderSunMarks(lat, lon) {
+  while (sunEventsGroup.firstChild) sunEventsGroup.removeChild(sunEventsGroup.firstChild);
+
+  var offsetMin = localNoonDate.getTimezoneOffset();
+  var sun = sunEvents(noonJD, lat, lon);
 
   function dayFraction(utcMinutes) {
-    return ((utcMinutes + offsetMin) % 1440 + 1440) % 1440 / 1440;
+    return ((utcMinutes - offsetMin) % 1440 + 1440) % 1440 / 1440;
   }
 
   function place(utcMinutes, color, label) {
     if (utcMinutes === null) return;
     var f = dayFraction(utcMinutes);
     var angle = f * 2 * Math.PI;
-    var x = markRadius * Math.sin(angle);
-    var y = -markRadius * Math.cos(angle);
+    var x = sunMarkRadius * Math.sin(angle);
+    var y = -sunMarkRadius * Math.cos(angle);
     var circle = document.createElementNS(svgNS, "circle");
     circle.setAttribute("cx", x);
     circle.setAttribute("cy", y);
-    circle.setAttribute("r", glyphR);
+    circle.setAttribute("r", sunGlyphR);
     circle.setAttribute("fill", color);
-    group.appendChild(circle);
+    sunEventsGroup.appendChild(circle);
     console.log(label + " day fraction:", f.toFixed(4));
   }
 
   place(sun.sunrise, "yellow", "Sunrise");
   place(sun.sunset, "white", "Sunset");
-})();
+}
+
+function updateLocationInfo() {
+  var latDir = currentLat >= 0 ? "N" : "S";
+  var lonDir = currentLon >= 0 ? "E" : "W";
+  var text = Math.abs(currentLat).toFixed(2) + " " + latDir + ", "
+    + Math.abs(currentLon).toFixed(2) + " " + lonDir + " · " + tzName + " · " + locationStatus;
+  document.getElementById("location-info").textContent = text;
+}
+
+renderSunMarks(currentLat, currentLon);
+updateLocationInfo();
+
+// Geolocation requires https or localhost; opening the file directly from
+// disk always falls back to the default coordinates, silently.
+if (navigator.geolocation) {
+  navigator.geolocation.getCurrentPosition(
+    function(pos) {
+      currentLat = pos.coords.latitude;
+      currentLon = pos.coords.longitude;
+      locationStatus = "located";
+      renderSunMarks(currentLat, currentLon);
+      updateLocationInfo();
+    },
+    function() {
+      // denied, unavailable, or timed out — keep the default silently
+    },
+    { timeout: 5000, maximumAge: 300000 }
+  );
+}
 
 var initK = fullMoonK(initJD);
 var initThisFM = ph(initK, 0.5);
