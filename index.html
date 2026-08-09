@@ -86,8 +86,17 @@ function fullMoonK(t) {
 }
 
 // Meeus ch.47: Moon's geocentric ecliptic longitude, mean longitude L'
-// plus the leading periodic terms of table 47.A (the ones independent
-// of eccentricity correction, i.e. no extra E factor).
+// plus the leading periodic terms of table 47.A. Five of these terms
+// (sin(M), sin(2D-M-M'), sin(2D-M), sin(M-M'), sin(M+M')) carry an E
+// eccentricity factor in the table; it's omitted here as negligible
+// (E is about 0.99933, so dropping it costs ~0.00015 deg), not because
+// these terms are E-independent.
+//
+// The five angle arguments below (L', D, M, M', F) also drop their T^2
+// secular terms, unlike ph()/phQuarter(), which keep theirs. That costs
+// ~0.00004 deg in 2026, ~0.0003 deg by 2100, ~0.022 deg by 2500, and
+// ~0.20 deg by 3000 — the ring drifts slowly over millennia even though
+// the calendar's phase dates (from ph()/phQuarter()) do not.
 function moonLongitude(jde) {
   var T = (jde - 2451545.0) / 36525;
   var Lp = 218.3164477 + 481267.88123421 * T;
