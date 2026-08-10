@@ -114,13 +114,6 @@ svg {
 <!-- Background labels for clock face -->
 <text x="0" y="-35" text-anchor="middle" font-family="sans-serif" font-size="28" fill="white" opacity="0.85">civil time</text>
 <text x="0" y="55" text-anchor="middle" font-family="sans-serif" font-size="28" fill="#ffb300" opacity="0.85">solar time</text>
-<!-- Solar mean time hands (amber, 20% smaller, no hub) -->
-<g id="hand-solar-mean-hour">
-<line x1="0" y1="0" x2="0" y2="-77" stroke="#ffb300" stroke-width="8" stroke-linecap="round" />
-</g>
-<g id="hand-solar-mean-minute">
-<line x1="0" y1="0" x2="0" y2="-121" stroke="#ffb300" stroke-width="5" stroke-linecap="round" />
-</g>
 <!-- All crimson hands are kept last so they always render above every ring, tick and mark. -->
 <g id="hand-solar">
 <line x1="0" y1="-255" x2="0" y2="-295.5" stroke="crimson" stroke-width="6" stroke-linecap="round" />
@@ -131,16 +124,24 @@ svg {
 <g id="hand-hours">
 <line x1="0" y1="-155" x2="0" y2="-195.5" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 </g>
+<!-- Clock-face stack, back to front: hour+minute hands, then the amber
+     solar-time hands above them, then the second hand and hub on top. -->
 <g id="hand-clock-hour">
 <line x1="0" y1="0" x2="0" y2="-70" stroke="white" stroke-width="8" stroke-linecap="round" />
 </g>
 <g id="hand-clock-minute">
 <line x1="0" y1="0" x2="0" y2="-110" stroke="white" stroke-width="5" stroke-linecap="round" />
 </g>
-<g id="hand-clock-second">
-<line x1="0" y1="0" x2="0" y2="-130" stroke="white" stroke-width="2" stroke-linecap="round" />
+<g id="hand-solar-mean-hour">
+<line x1="0" y1="0" x2="0" y2="-63" stroke="#ffb300" stroke-width="7.2" stroke-linecap="round" />
 </g>
-<circle cx="0" cy="0" r="7" fill="white" />
+<g id="hand-solar-mean-minute">
+<line x1="0" y1="0" x2="0" y2="-99" stroke="#ffb300" stroke-width="4.5" stroke-linecap="round" />
+</g>
+<g id="hand-clock-second">
+<line x1="0" y1="0" x2="0" y2="-130" stroke="red" stroke-width="2" stroke-linecap="round" />
+</g>
+<circle cx="0" cy="0" r="7" fill="red" />
 </svg>
 <div id="location-info"></div>
 <div id="location-choice">
