@@ -24,6 +24,25 @@ svg {
   margin-top: 8px;
   text-align: center;
 }
+#location-choice {
+  display: none;
+  margin-top: 8px;
+  text-align: center;
+}
+#location-choice button {
+  background: none;
+  border: 1px solid grey;
+  color: #eee;
+  font-family: sans-serif;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin: 0 4px;
+}
+#location-choice button:hover {
+  background: #222;
+}
 #city-search-container {
   display: none;
   margin-top: 8px;
@@ -114,11 +133,15 @@ svg {
 <circle cx="0" cy="0" r="7" fill="crimson" />
 </svg>
 <div id="location-info"></div>
+<div id="location-choice">
+<button id="choice-auto-btn" type="button">Use my location</button>
+<button id="choice-manual-btn" type="button">Enter city manually</button>
+</div>
 <div id="city-search-container">
 <input id="city-search-input" type="text" placeholder="Search for your city…" autocomplete="off" />
 <ul id="city-search-results"></ul>
 </div>
-<button id="clear-location-btn" type="button">Use device location instead</button>
+<button id="clear-location-btn" type="button">Change location</button>
 <script>
 var svgNS = "http://www.w3.org/2000/svg";
 var cx = 0, cy = 0;
@@ -423,6 +446,12 @@ var locationStatus = "locating";
 var locationFailureReason = null;
 var manualCityLabel = null; // "City, Region, Country" for the manual-selection display
 
+// null (undecided) | "auto" | "manual" — which of the two choice buttons the
+// user picked, separate from locationStatus. Geolocation is never started
+// until the user explicitly asks for it; picking "manual" never calls it at
+// all. A persisted manual city (loaded below) implies "manual" immediately.
+var locationMode = null;
+
 // null = follow the device's own local time zone (the "located" path: the
 // device is presumed to be where its GPS/wifi says it is). A specific IANA
 // name = a manually-selected city's zone, which may have nothing to do with
@@ -600,6 +629,10 @@ function updateLocationInfo() {
     var lonDir = currentLon >= 0 ? "E" : "W";
     text = Math.abs(currentLat).toFixed(2) + " " + latDir + ", "
       + Math.abs(currentLon).toFixed(2) + " " + lonDir + " · timezone: " + tzName + " · located";
+  } else if (locationMode === null) {
+    text = ""; // the choice buttons below speak for themselves
+  } else if (locationMode === "manual") {
+    text = "Enter a city below";
   } else if (locationStatus === "locating") {
     text = "Locating" + (locationFailureReason ? " (retrying after " + locationFailureReason + ")" : "…");
   } else {
@@ -607,11 +640,17 @@ function updateLocationInfo() {
   }
   document.getElementById("location-info").textContent = text;
 
-  // City search only makes sense once geolocation has actually failed; the
-  // clear/retry button only makes sense once a manual city is active.
-  document.getElementById("city-search-container").style.display = locationStatus === "unavailable" ? "block" : "none";
-  document.getElementById("clear-location-btn").style.display = locationStatus === "manual" ? "inline-block" : "none";
-  if (locationStatus !== "unavailable") {
+  // The choice buttons only make sense before any mode has been picked.
+  // City search makes sense once the user has chosen manual mode (whether
+  // or not they've picked a city yet) or once automatic has actually
+  // failed. Clear/change makes sense once a location is established either
+  // way, so the user isn't stuck with a first choice.
+  document.getElementById("location-choice").style.display = locationMode === null ? "block" : "none";
+  var showSearch = locationStatus === "unavailable" || (locationMode === "manual" && locationStatus !== "manual");
+  document.getElementById("city-search-container").style.display = showSearch ? "block" : "none";
+  document.getElementById("clear-location-btn").style.display =
+    (locationStatus === "manual" || locationStatus === "located") ? "inline-block" : "none";
+  if (!showSearch) {
     document.getElementById("city-search-input").value = "";
     document.getElementById("city-search-results").innerHTML = "";
   }
@@ -634,6 +673,7 @@ function selectCity(result) {
   currentLon = result.longitude;
   displayTimeZone = result.timezone;
   manualCityLabel = cityLabel(result);
+  locationMode = "manual";
   locationStatus = "manual";
   locationFailureReason = null;
   try {
@@ -682,8 +722,9 @@ document.getElementById("clear-location-btn").addEventListener("click", function
   locationStatus = "locating";
   locationFailureReason = null;
   geoAttempt = 0;
+  locationMode = null; // back to the choice screen — don't assume last time's pick
+  updateSunMarks(0);
   updateLocationInfo();
-  requestLocation();
 });
 
 function loadPersistedManualLocation() {
@@ -696,6 +737,7 @@ function loadPersistedManualLocation() {
     currentLon = saved.lon;
     displayTimeZone = saved.tz;
     manualCityLabel = saved.label || null;
+    locationMode = "manual";
     locationStatus = "manual";
     return true;
   } catch (e) {
@@ -764,16 +806,26 @@ function requestLocation() {
   );
 }
 
-if (locationStatus === "manual") {
-  // Persisted city already loaded above — geolocation would only overwrite
-  // a deliberate choice with a guess.
-} else if (navigator.geolocation) {
-  requestLocation();
-} else {
-  locationStatus = "unavailable";
-  locationFailureReason = "unsupported";
+// Geolocation is never started automatically — only in response to the
+// "Use my location" button below. If a manual city was already restored
+// above, locationMode is "manual" and the choice screen never shows at all.
+document.getElementById("choice-auto-btn").addEventListener("click", function() {
+  locationMode = "auto";
   updateLocationInfo();
-}
+  if (navigator.geolocation) {
+    requestLocation();
+  } else {
+    locationStatus = "unavailable";
+    locationFailureReason = "unsupported";
+    updateLocationInfo();
+  }
+});
+
+document.getElementById("choice-manual-btn").addEventListener("click", function() {
+  locationMode = "manual";
+  updateLocationInfo();
+  document.getElementById("city-search-input").focus();
+});
 
 // --- Verification: none of this touches the live cachedToday/cachedTomorrow. ---
 
