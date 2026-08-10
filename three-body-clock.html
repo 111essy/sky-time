@@ -1119,14 +1119,20 @@ function tick() {
   handClockMinute.setAttribute("transform", "rotate(" + (minFraction * 360) + ")");
   handClockSecond.setAttribute("transform", "rotate(" + (secFraction * 360) + ")");
 
-  // Solar mean time hands (amber, location-based, rounded to minute)
-  // They sync to the same second boundaries as civil time
+  // Solar mean time hands (amber, location-based, offset from civil time)
+  // Take civil time as base, then offset by the difference to solar mean time (rounded to minute)
   if (haveLocation) {
     var solarMeanTime = getSolarMeanTime(now, currentLat, currentLon);
-    // Use the civil time's secFraction for perfect synchronization
-    // But apply the rounded solar minutes
-    var solarMinFraction = (solarMeanTime.minutes + secFraction) / 60;
-    var solarHourFraction = (solarMeanTime.hours % 12 + solarMinFraction) / 12;
+    // Calculate offset in minutes between civil and solar time
+    var civilTotalMinutes = wall.hours * 60 + wall.minutes;
+    var solarTotalMinutes = solarMeanTime.hours * 60 + solarMeanTime.minutes;
+    var offsetMinutes = Math.round(solarTotalMinutes - civilTotalMinutes);
+    
+    // Apply offset to civil time's smooth fractions
+    var solarMinFraction = ((wall.minutes + offsetMinutes + secFraction) % 60) / 60;
+    var solarHourOffset = Math.floor((wall.minutes + offsetMinutes) / 60);
+    var solarHourFraction = (((wall.hours % 12) + solarHourOffset + solarMinFraction) % 12) / 12;
+    
     handSolarMeanHour.setAttribute("transform", "rotate(" + (solarHourFraction * 360) + ")");
     handSolarMeanMinute.setAttribute("transform", "rotate(" + (solarMinFraction * 360) + ")");
   } else {
