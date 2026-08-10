@@ -1144,12 +1144,19 @@ function minutesOfDayToClockText(totalMinutes) {
 
 (function() {
   var now = new Date();
-  var skyMinutesOfDay = ((now.getUTCHours() * 60 + now.getUTCMinutes()
-    + (now.getUTCSeconds() + now.getUTCMilliseconds() / 1000) / 60
-    + skyZoneOffsetMinutes(ROTTERDAM_LON)) % 1440 + 1440) % 1440;
+  // Sky time: pure UTC + fixed zone offset, no wall clock involved (see tick()).
+  var skyMinutesOfDay = (((Date.now() / 60000) + skyZoneOffsetMinutes(ROTTERDAM_LON))
+    % 1440 + 1440) % 1440;
+  // Civil time: for comparison only, this IS wall-clock/timezone-database based.
   var civil = displayWallClock(now);
   var civilMinutesOfDay = civil.hours * 60 + civil.minutes + (civil.seconds + civil.milliseconds / 1000) / 60;
-  console.log("Rotterdam sky time / civil time:", minutesOfDayToClockText(skyMinutesOfDay), "/", minutesOfDayToClockText(civilMinutesOfDay));
+  var gapMinutes = Math.round((((civilMinutesOfDay - skyMinutesOfDay) % 1440) + 1440 + 720) % 1440 - 720);
+  // Rotterdam's sky zone is fixed at +00:20; civil offset shifts with DST
+  // (CET +01:00 / CEST +02:00), so the gap is necessarily seasonal: 40 min
+  // in winter (60 - 20), 100 min (1h40m) in summer (120 - 20) -- not one
+  // constant, because only one of the two sides of the gap observes DST.
+  console.log("Rotterdam sky time / civil time:", minutesOfDayToClockText(skyMinutesOfDay), "/", minutesOfDayToClockText(civilMinutesOfDay),
+    " gap:", gapMinutes + "min (expect 40 in CET winter, 100 in CEST summer)");
 })();
 
 var handHours = document.getElementById("hand-hours");
@@ -1183,13 +1190,17 @@ function tick() {
   handClockMinute.setAttribute("transform", "rotate(" + (minFraction * 360) + ")");
   handClockSecond.setAttribute("transform", "rotate(" + (secFraction * 360) + ")");
 
-  // Sky-time zone hands (amber, longitude-zoned and smooth)
+  // Sky-time zone hands (amber, longitude-zoned and smooth). Deliberately
+  // NO dependency on civil time or the timezone database: Date.now() is
+  // milliseconds since the Unix epoch, which is itself a UTC midnight, so
+  // dividing by 60000 and taking %1440 gives UTC minutes-of-day directly —
+  // continuous to the millisecond, no getUTCHours/Minutes/Seconds
+  // decomposition, no wall-clock component to desync from.
   if (haveLocation) {
-    var utcMinutesNow = now.getUTCHours() * 60 + now.getUTCMinutes()
-      + (now.getUTCSeconds() + now.getUTCMilliseconds() / 1000) / 60;
-    var skyMinutesOfDay = ((utcMinutesNow + skyZoneOffsetMinutes(currentLon)) % 1440 + 1440) % 1440;
-    var skyHour12 = (skyMinutesOfDay / 60) % 12;
+    var skyMinutesOfDay = (((Date.now() / 60000) + skyZoneOffsetMinutes(currentLon))
+      % 1440 + 1440) % 1440;
     var skyMinFraction = (skyMinutesOfDay % 60) / 60;
+    var skyHour12 = Math.floor(skyMinutesOfDay / 60) % 12; // integer hour only — skyMinFraction supplies the fraction
     var skyHourFraction = (skyHour12 + skyMinFraction) / 12;
 
     handSolarMeanHour.setAttribute("transform", "rotate(" + (skyHourFraction * 360) + ")");
