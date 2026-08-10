@@ -97,6 +97,8 @@ svg {
 <circle cx="0" cy="0" r="250" fill="none" stroke="white" stroke-width="2" />
 <circle cx="0" cy="0" r="300" fill="none" stroke="white" stroke-width="2" />
 <circle cx="0" cy="0" r="150" fill="none" stroke="white" stroke-width="2" />
+<text x="0" y="-55" fill="white" font-family="sans-serif" font-size="13" text-anchor="middle">civil time</text>
+<text x="0" y="68" fill="#ffbf00" font-family="sans-serif" font-size="13" text-anchor="middle">sky time</text>
 <g id="sun-events">
 <g id="mark-solar-midnight">
 <line x1="0" y1="-200" x2="0" y2="-162.5" stroke="blue" stroke-width="4" />
@@ -121,16 +123,22 @@ svg {
 <g id="hand-hours">
 <line x1="0" y1="-155" x2="0" y2="-195.5" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 </g>
+<g id="hand-mean-hour">
+<line x1="0" y1="0" x2="0" y2="-49" stroke="#ffbf00" stroke-width="5.6" stroke-linecap="round" />
+</g>
+<g id="hand-mean-minute">
+<line x1="0" y1="0" x2="0" y2="-77" stroke="#ffbf00" stroke-width="3.5" stroke-linecap="round" />
+</g>
 <g id="hand-clock-hour">
-<line x1="0" y1="0" x2="0" y2="-70" stroke="crimson" stroke-width="8" stroke-linecap="round" />
+<line x1="0" y1="0" x2="0" y2="-70" stroke="white" stroke-width="8" stroke-linecap="round" />
 </g>
 <g id="hand-clock-minute">
-<line x1="0" y1="0" x2="0" y2="-110" stroke="crimson" stroke-width="5" stroke-linecap="round" />
+<line x1="0" y1="0" x2="0" y2="-110" stroke="white" stroke-width="5" stroke-linecap="round" />
 </g>
 <g id="hand-clock-second">
-<line x1="0" y1="0" x2="0" y2="-130" stroke="crimson" stroke-width="2" stroke-linecap="round" />
+<line x1="0" y1="0" x2="0" y2="-130" stroke="white" stroke-width="2" stroke-linecap="round" />
 </g>
-<circle cx="0" cy="0" r="7" fill="crimson" />
+<circle cx="0" cy="0" r="7" fill="white" />
 </svg>
 <div id="location-info"></div>
 <div id="location-choice">
@@ -1052,6 +1060,8 @@ var handSolar = document.getElementById("hand-solar");
 var handClockHour = document.getElementById("hand-clock-hour");
 var handClockMinute = document.getElementById("hand-clock-minute");
 var handClockSecond = document.getElementById("hand-clock-second");
+var handMeanHour = document.getElementById("hand-mean-hour");
+var handMeanMinute = document.getElementById("hand-mean-minute");
 
 function tick() {
   var now = new Date();
@@ -1074,6 +1084,32 @@ function tick() {
   handClockHour.setAttribute("transform", "rotate(" + (clockHourFraction * 360) + ")");
   handClockMinute.setAttribute("transform", "rotate(" + (minFraction * 360) + ")");
   handClockSecond.setAttribute("transform", "rotate(" + (secFraction * 360) + ")");
+
+  // Mean solar time: civil time shifted by the LOCATION's own offset from
+  // UTC (longitude/15, i.e. 4 minutes per degree east) rather than the
+  // political timezone's offset — Local Mean Time, deliberately without the
+  // equation-of-time wobble (that's APPARENT solar time, already covered by
+  // the solar noon/midnight ring marks). The true offset is a fractional
+  // number of minutes; it's rounded to the nearest whole minute and applied
+  // on top of civil time's own continuous seconds, so the amber hands sweep
+  // in lockstep with the white ones (no independent sub-minute drift) and
+  // only differ by a clean, steady minute count — there's no seconds hand
+  // left to show finer resolution than that anyway.
+  var meanClockHourFraction = 0, meanMinFraction = 0;
+  if (haveLocation) {
+    var civilMinutesOfDay = wall.hours * 60 + minFraction * 60;
+    var utcMinutesNow = now.getUTCHours() * 60 + now.getUTCMinutes() + (now.getUTCSeconds() + now.getUTCMilliseconds() / 1000) / 60;
+    var trueMeanMinutesOfDay = ((utcMinutesNow + currentLon * 4) % 1440 + 1440) % 1440;
+    var offset = ((trueMeanMinutesOfDay - civilMinutesOfDay + 720) % 1440 + 1440) % 1440 - 720;
+    var roundedOffset = Math.round(offset);
+    var meanMinutesOfDay = ((civilMinutesOfDay + roundedOffset) % 1440 + 1440) % 1440;
+    var meanHoursFloat = meanMinutesOfDay / 60;
+    var meanHourInt = Math.floor(meanHoursFloat);
+    meanMinFraction = (meanHoursFloat - meanHourInt);
+    meanClockHourFraction = ((meanHourInt % 12) + meanMinFraction) / 12;
+  }
+  handMeanHour.setAttribute("transform", "rotate(" + (meanClockHourFraction * 360) + ")");
+  handMeanMinute.setAttribute("transform", "rotate(" + (meanMinFraction * 360) + ")");
 
   var jd = Date.now() / 86400000 + 2440587.5;
   var lunarFraction = lunarPointerFraction(jd);
