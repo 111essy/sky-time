@@ -113,13 +113,13 @@ svg {
 <g id="ticks-clock"></g>
 <!-- Background labels for clock face -->
 <text x="0" y="-35" text-anchor="middle" font-family="sans-serif" font-size="28" fill="white" opacity="0.85">civil time</text>
-<text x="0" y="55" text-anchor="middle" font-family="sans-serif" font-size="28" fill="#ffb300" opacity="0.85">sky time</text>
+<text x="0" y="55" text-anchor="middle" font-family="sans-serif" font-size="28" fill="#ffb300" opacity="0.85">solar time</text>
 <!-- Solar mean time hands (amber, 20% smaller, no hub) -->
 <g id="hand-solar-mean-hour">
-<line x1="0" y1="0" x2="0" y2="-56" stroke="#ffb300" stroke-width="6.4" stroke-linecap="round" />
+<line x1="0" y1="0" x2="0" y2="-77" stroke="#ffb300" stroke-width="8" stroke-linecap="round" />
 </g>
 <g id="hand-solar-mean-minute">
-<line x1="0" y1="0" x2="0" y2="-88" stroke="#ffb300" stroke-width="4" stroke-linecap="round" />
+<line x1="0" y1="0" x2="0" y2="-121" stroke="#ffb300" stroke-width="5" stroke-linecap="round" />
 </g>
 <!-- All crimson hands are kept last so they always render above every ring, tick and mark. -->
 <g id="hand-solar">
@@ -655,12 +655,12 @@ function updateLocationInfo() {
   var text;
   var skyZoneText = currentLon === null ? null : formatOffsetMinutes(skyZoneOffsetMinutes(currentLon));
   if (locationStatus === "manual") {
-    text = (manualCityLabel || "Selected city") + " · timezone: " + displayTimeZone + " · sky zone: " + skyZoneText + " · manual";
+    text = (manualCityLabel || "Selected city") + " · timezone: " + displayTimeZone + " · solar zone: " + skyZoneText + " · manual";
   } else if (locationStatus === "located") {
     var latDir = currentLat >= 0 ? "N" : "S";
     var lonDir = currentLon >= 0 ? "E" : "W";
     text = Math.abs(currentLat).toFixed(2) + " " + latDir + ", "
-      + Math.abs(currentLon).toFixed(2) + " " + lonDir + " · timezone: " + tzName + " · sky zone: " + skyZoneText + " · located";
+      + Math.abs(currentLon).toFixed(2) + " " + lonDir + " · timezone: " + tzName + " · solar zone: " + skyZoneText + " · located";
   } else if (locationMode === null) {
     text = ""; // the choice buttons below speak for themselves
   } else if (locationMode === "manual") {
@@ -1139,23 +1139,23 @@ function minutesOfDayToClockText(totalMinutes) {
   { lon: 180, expect: "+12:00" },
   { lon: -180, expect: "+12:00" }
 ].forEach(function(c) {
-  console.log("Sky zone lon " + c.lon + " ->", formatOffsetMinutes(skyZoneOffsetMinutes(c.lon)), " expect:", c.expect);
+  console.log("Solar zone lon " + c.lon + " ->", formatOffsetMinutes(skyZoneOffsetMinutes(c.lon)), " expect:", c.expect);
 });
 
 (function() {
   var now = new Date();
-  // Sky time: pure UTC + fixed zone offset, no wall clock involved (see tick()).
+  // Solar time: pure UTC + fixed zone offset, no wall clock involved (see tick()).
   var skyMinutesOfDay = (((Date.now() / 60000) + skyZoneOffsetMinutes(ROTTERDAM_LON))
     % 1440 + 1440) % 1440;
   // Civil time: for comparison only, this IS wall-clock/timezone-database based.
   var civil = displayWallClock(now);
   var civilMinutesOfDay = civil.hours * 60 + civil.minutes + (civil.seconds + civil.milliseconds / 1000) / 60;
   var gapMinutes = Math.round((((civilMinutesOfDay - skyMinutesOfDay) % 1440) + 1440 + 720) % 1440 - 720);
-  // Rotterdam's sky zone is fixed at +00:20; civil offset shifts with DST
+  // Rotterdam's solar zone is fixed at +00:20; civil offset shifts with DST
   // (CET +01:00 / CEST +02:00), so the gap is necessarily seasonal: 40 min
   // in winter (60 - 20), 100 min (1h40m) in summer (120 - 20) -- not one
   // constant, because only one of the two sides of the gap observes DST.
-  console.log("Rotterdam sky time / civil time:", minutesOfDayToClockText(skyMinutesOfDay), "/", minutesOfDayToClockText(civilMinutesOfDay),
+  console.log("Rotterdam solar time / civil time:", minutesOfDayToClockText(skyMinutesOfDay), "/", minutesOfDayToClockText(civilMinutesOfDay),
     " gap:", gapMinutes + "min (expect 40 in CET winter, 100 in CEST summer)");
 })();
 
