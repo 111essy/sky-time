@@ -565,6 +565,16 @@ function refreshDayEventCache(refDate) {
   lastLocalDateStr = wall.year + "-" + wall.month + "-" + wall.date;
 }
 
+function refreshSunMarkCacheOnRollover(refDate, wall) {
+  if (locationStatus !== "located" && locationStatus !== "manual") return;
+  var ref = refDate || new Date();
+  var wallClock = wall || displayWallClock(ref);
+  var todayKey = wallClock.year + "-" + wallClock.month + "-" + wallClock.date;
+  if (todayKey !== lastLocalDateStr) {
+    refreshDayEventCache(ref);
+  }
+}
+
 var markMidnight = document.getElementById("mark-solar-midnight");
 var markNoon = document.getElementById("mark-solar-noon");
 var markSunrise = document.getElementById("mark-sunrise");
@@ -892,45 +902,81 @@ function angularDelta(a, b) {
 // year (found by scanning 2026: closest approach is ~6.4°, on 2 -> 3 Nov,
 // the date the clocks change — never a true crossing for this location, but
 // the closest real rehearsal of it, and it exercises the actual
-// rollover-triggered cache refresh in refreshDayEventCache(), which the
-// synthetic check above does not: that refresh is the one place a
-// discontinuity could sneak in even if the blend primitive itself is sound.
+// rollover-triggered cache refresh path used by tick()/refreshDayEventCache().
 (function verifyMidnightContinuityRealData() {
-  var simDate = new Date(2026, 10, 2, 23, 50, 0, 0);
-  var simToday = null, simTomorrow = null, simDateStr = null;
-  var prev = null;
-  var maxJump = 0;
-  var firstMidnightAngle = null;
-  for (var i = 0; i < 30; i++) {
-    var dateStr = simDate.toDateString();
-    if (dateStr !== simDateStr) {
-      var todayNoon = localNoon(simDate);
-      simToday = computeDayEvents(todayNoon, todayNoon.getTimezoneOffset(), ROTTERDAM_LAT, ROTTERDAM_LON);
-      var tmr = new Date(simDate.getFullYear(), simDate.getMonth(), simDate.getDate() + 1, 12, 0, 0, 0);
-      simTomorrow = computeDayEvents(tmr, tmr.getTimezoneOffset(), ROTTERDAM_LAT, ROTTERDAM_LON);
-      simDateStr = dateStr;
+  var prevLat = currentLat;
+  var prevLon = currentLon;
+  var prevStatus = locationStatus;
+  var prevToday = cachedToday;
+  var prevTomorrow = cachedTomorrow;
+  var prevDateStr = lastLocalDateStr;
+  var prevLastCheck = lastSunMarksCheck;
+  try {
+    currentLat = ROTTERDAM_LAT;
+    currentLon = ROTTERDAM_LON;
+    locationStatus = "manual";
+    function runSimulation(useThrottleControl) {
+      var simDate = new Date(2026, 10, 2, 23, 50, 0, 0);
+      var controlBoundaryMs = null;
+      refreshDayEventCache(simDate);
+      var prev = null;
+      var maxJump = 0;
+      var firstMidnightAngle = null;
+      for (var i = 0; i < 30; i++) {
+        var wall = displayWallClock(simDate);
+        if (useThrottleControl) {
+          var todayKey = wall.year + "-" + wall.month + "-" + wall.date;
+          if (todayKey !== lastLocalDateStr) {
+            if (controlBoundaryMs === null) controlBoundaryMs = simDate.getTime();
+            if (simDate.getTime() - controlBoundaryMs >= 60000) {
+              refreshDayEventCache(simDate);
+            }
+          }
+        } else {
+          refreshSunMarkCacheOnRollover(simDate, wall);
+        }
+        var secFraction = (wall.seconds + wall.milliseconds / 1000) / 60;
+        var minFraction = (wall.minutes + secFraction) / 60;
+        var hourFraction = (wall.hours + minFraction) / 24;
+        var noonAngle = blendFraction(dayFractionOf(cachedToday.noon, cachedToday.offsetMin), dayFractionOf(cachedTomorrow.noon, cachedTomorrow.offsetMin), hourFraction) * 360;
+        var midnightAngle = (noonAngle / 360 + 0.5) % 1 * 360;
+        var sunriseAngle = blendFraction(dayFractionOf(cachedToday.sunrise, cachedToday.offsetMin), dayFractionOf(cachedTomorrow.sunrise, cachedTomorrow.offsetMin), hourFraction) * 360;
+        var sunsetAngle = blendFraction(dayFractionOf(cachedToday.sunset, cachedToday.offsetMin), dayFractionOf(cachedTomorrow.sunset, cachedTomorrow.offsetMin), hourFraction) * 360;
+        if (firstMidnightAngle === null) firstMidnightAngle = midnightAngle;
+        if (prev) {
+          maxJump = Math.max(maxJump,
+            Math.abs(angularDelta(prev.noon, noonAngle)),
+            Math.abs(angularDelta(prev.midnight, midnightAngle)),
+            Math.abs(angularDelta(prev.sunrise, sunriseAngle)),
+            Math.abs(angularDelta(prev.sunset, sunsetAngle)));
+        }
+        prev = { noon: noonAngle, midnight: midnightAngle, sunrise: sunriseAngle, sunset: sunsetAngle };
+        simDate = new Date(simDate.getTime() + 60000);
+      }
+      return { maxJump: maxJump, firstMidnightAngle: firstMidnightAngle };
     }
-    var p = (simDate.getHours() + (simDate.getMinutes() + simDate.getSeconds() / 60) / 60) / 24;
-    var noonAngle = blendFraction(dayFractionOf(simToday.noon, simToday.offsetMin), dayFractionOf(simTomorrow.noon, simTomorrow.offsetMin), p) * 360;
-    var midnightAngle = (noonAngle / 360 + 0.5) % 1 * 360;
-    var sunriseAngle = blendFraction(dayFractionOf(simToday.sunrise, simToday.offsetMin), dayFractionOf(simTomorrow.sunrise, simTomorrow.offsetMin), p) * 360;
-    var sunsetAngle = blendFraction(dayFractionOf(simToday.sunset, simToday.offsetMin), dayFractionOf(simTomorrow.sunset, simTomorrow.offsetMin), p) * 360;
-    if (firstMidnightAngle === null) firstMidnightAngle = midnightAngle;
-
-    if (prev) {
-      maxJump = Math.max(maxJump,
-        Math.abs(angularDelta(prev.noon, noonAngle)),
-        Math.abs(angularDelta(prev.midnight, midnightAngle)),
-        Math.abs(angularDelta(prev.sunrise, sunriseAngle)),
-        Math.abs(angularDelta(prev.sunset, sunsetAngle)));
+    var immediate = runSimulation(false);
+    cachedToday = prevToday;
+    cachedTomorrow = prevTomorrow;
+    lastLocalDateStr = prevDateStr;
+    lastSunMarksCheck = prevLastCheck;
+    var throttled = runSimulation(true);
+    console.log("Max per-minute mark jump stepping across 2->3 Nov local midnight (solar-midnight mark starts at " + immediate.firstMidnightAngle.toFixed(1) + "° from top, its closest approach all year) — A immediate rollover:", immediate.maxJump.toFixed(4) + "°", "B 60s-suppressed rollover:", throttled.maxJump.toFixed(4) + "°");
+    if (Math.abs(immediate.maxJump - throttled.maxJump) < 0.0001) {
+      console.log("INCONCLUSIVE: control did not fail");
     }
-    prev = { noon: noonAngle, midnight: midnightAngle, sunrise: sunriseAngle, sunset: sunsetAngle };
-    simDate = new Date(simDate.getTime() + 60000);
+  } finally {
+    currentLat = prevLat;
+    currentLon = prevLon;
+    locationStatus = prevStatus;
+    cachedToday = prevToday;
+    cachedTomorrow = prevTomorrow;
+    lastLocalDateStr = prevDateStr;
+    lastSunMarksCheck = prevLastCheck;
   }
-  console.log("Max per-minute mark jump stepping across 2->3 Nov local midnight (solar-midnight mark starts at " + firstMidnightAngle.toFixed(1) + "° from top, its closest approach all year):", maxJump.toFixed(4) + "°");
 })();
 
-// 3. Solar noon in Rotterdam should read near 13:48 in summer and 12:48 in
+// 3. Solar noon in Rotterdam should read near 13:44 in summer and 12:40 in
 // winter — never 12:00 — since it's mean solar noon corrected by longitude
 // and the equation of time, not civil noon.
 (function() {
@@ -1050,8 +1096,8 @@ function minutesToLocalTime(minUTC, utcOffsetHours) {
   { date: [2025, 12, 21], utcOffset: 1, expect: "08:48 / 16:33 CET" },
   { date: [2026, 6, 21], utcOffset: 2, expect: "05:22 / 22:05 CEST" }
 ].forEach(function(c) {
-  var jd = seedJD(c.date[0], c.date[1], c.date[2]);
-  var ev = sunEvents(jd, ROTTERDAM_LAT, ROTTERDAM_LON);
+  var localNoonDate = new Date(c.date[0], c.date[1] - 1, c.date[2], 12, 0, 0, 0);
+  var ev = computeDayEvents(localNoonDate, localNoonDate.getTimezoneOffset(), ROTTERDAM_LAT, ROTTERDAM_LON);
   var got = minutesToLocalTime(ev.sunrise, c.utcOffset) + " / " + minutesToLocalTime(ev.sunset, c.utcOffset);
   console.log("Sunrise/sunset " + c.date.join("-") + ":", got, " expect:", c.expect);
 });
@@ -1153,19 +1199,14 @@ function tick() {
   // The blend itself runs every frame, so the marks are always continuous.
   updateSunMarks(hourFraction);
 
-  // Only the cache behind that blend is throttled — checked once a minute,
-  // not every frame, and only refreshed on an actual date rollover (in the
-  // display timezone, via the same `wall` used for the hand above).
-  var nowMs = Date.now();
-  if (nowMs - lastSunMarksCheck >= 60000) {
-    lastSunMarksCheck = nowMs;
-    if (haveLocation) {
-      var todayKey = wall.year + "-" + wall.month + "-" + wall.date;
-      if (todayKey !== lastLocalDateStr) {
-        refreshDayEventCache(now);
-      }
-    }
+  // The rollover check itself is cheap and must run every frame so midnight
+  // switches caches immediately. The timestamp is kept only as a diagnostic
+  // heartbeat; it no longer gates rollover detection.
+  if (haveLocation) {
+    refreshSunMarkCacheOnRollover(now, wall);
   }
+  var nowMs = Date.now();
+  if (nowMs - lastSunMarksCheck >= 60000) lastSunMarksCheck = nowMs;
 
   requestAnimationFrame(tick);
 }
