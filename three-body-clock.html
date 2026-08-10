@@ -1065,13 +1065,13 @@ var handClockHour = document.getElementById("hand-clock-hour");
 var handClockMinute = document.getElementById("hand-clock-minute");
 var handClockSecond = document.getElementById("hand-clock-second");
 
-// Calculate solar mean time (location-based, rounded to minute)
+// Calculate solar mean time (location-based, returns fractional minutes for offset calculation)
 function getSolarMeanTime(instant, lat, lon) {
   var jde = instant.getTime() / 86400000 + 2440587.5;
   var solar = solarPosition(jde);
   
-  // UTC time in hours
-  var utcHours = instant.getUTCHours() + instant.getUTCMinutes() / 60 + instant.getUTCSeconds() / 3600;
+  // UTC time in hours (including fractional seconds)
+  var utcHours = instant.getUTCHours() + instant.getUTCMinutes() / 60 + (instant.getUTCSeconds() + instant.getUTCMilliseconds() / 1000) / 3600;
   
   // Equation of time in hours (it's in minutes, divide by 60)
   var eotHours = solar.eot / 60;
@@ -1085,16 +1085,15 @@ function getSolarMeanTime(instant, lat, lon) {
   // Normalize to 0-24 range
   solarMeanHours = ((solarMeanHours % 24) + 24) % 24;
   
-  // Round to nearest minute
-  var solarMeanMinutes = Math.round(solarMeanHours * 60);
-  var roundedHours = Math.floor(solarMeanMinutes / 60);
-  var roundedMins = solarMeanMinutes % 60;
+  // Return fractional minutes (not rounded) for precise offset calculation
+  var totalMinutes = solarMeanHours * 60;
+  var hours = Math.floor(totalMinutes / 60) % 24;
+  var fractionalMinutes = totalMinutes % 60;
   
   return {
-    hours: roundedHours,
-    minutes: roundedMins,
-    hourFraction: roundedHours / 12,
-    minuteFraction: roundedMins / 60
+    hours: hours,
+    minutes: fractionalMinutes,  // fractional, not rounded
+    totalMinutes: totalMinutes
   };
 }
 
@@ -1120,13 +1119,25 @@ function tick() {
   handClockMinute.setAttribute("transform", "rotate(" + (minFraction * 360) + ")");
   handClockSecond.setAttribute("transform", "rotate(" + (secFraction * 360) + ")");
 
-  // Solar mean time hands (amber, location-based, rounded to minute)
+  // Solar mean time hands (amber, location-based, offset from civil time)
+  // Calculate offset in fractional minutes, then round for synchronized ticking
   if (haveLocation) {
     var solarMeanTime = getSolarMeanTime(now, currentLat, currentLon);
-    var solarMeanHourFraction = (solarMeanTime.hours % 12 + solarMeanTime.minuteFraction) / 12;
-    var solarMeanMinuteFraction = solarMeanTime.minuteFraction;
-    handSolarMeanHour.setAttribute("transform", "rotate(" + (solarMeanHourFraction * 360) + ")");
-    handSolarMeanMinute.setAttribute("transform", "rotate(" + (solarMeanMinuteFraction * 360) + ")");
+    
+    // Calculate offset in fractional minutes
+    var civilFractionalMinutes = wall.hours * 60 + wall.minutes + (wall.seconds + wall.milliseconds / 1000) / 60;
+    var offsetFractionalMinutes = solarMeanTime.totalMinutes - civilFractionalMinutes;
+    
+    // Round offset to nearest minute for synchronized ticking
+    var offsetMinutes = Math.round(offsetFractionalMinutes);
+    
+    // Apply rounded offset to civil time's smooth fractions
+    var solarMinFraction = ((wall.minutes + offsetMinutes + secFraction) % 60) / 60;
+    var solarHourOffset = Math.floor((wall.minutes + offsetMinutes) / 60);
+    var solarHourFraction = (((wall.hours % 12) + solarHourOffset + solarMinFraction) % 12) / 12;
+    
+    handSolarMeanHour.setAttribute("transform", "rotate(" + (solarHourFraction * 360) + ")");
+    handSolarMeanMinute.setAttribute("transform", "rotate(" + (solarMinFraction * 360) + ")");
   } else {
     handSolarMeanHour.setAttribute("transform", "rotate(0)");
     handSolarMeanMinute.setAttribute("transform", "rotate(0)");
