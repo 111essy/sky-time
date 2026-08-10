@@ -1065,7 +1065,7 @@ var handClockHour = document.getElementById("hand-clock-hour");
 var handClockMinute = document.getElementById("hand-clock-minute");
 var handClockSecond = document.getElementById("hand-clock-second");
 
-// Calculate solar mean time (location-based, returns hours and rounded minutes)
+// Calculate solar mean time (location-based, returns fractional minutes for offset calculation)
 function getSolarMeanTime(instant, lat, lon) {
   var jde = instant.getTime() / 86400000 + 2440587.5;
   var solar = solarPosition(jde);
@@ -1085,15 +1085,15 @@ function getSolarMeanTime(instant, lat, lon) {
   // Normalize to 0-24 range
   solarMeanHours = ((solarMeanHours % 24) + 24) % 24;
   
-  // Round minutes for synchronization
+  // Return fractional minutes (not rounded) for precise offset calculation
   var totalMinutes = solarMeanHours * 60;
-  var roundedMinutes = Math.round(totalMinutes);
-  var roundedHours = Math.floor(roundedMinutes / 60) % 24;
-  var roundedMins = roundedMinutes % 60;
+  var hours = Math.floor(totalMinutes / 60) % 24;
+  var fractionalMinutes = totalMinutes % 60;
   
   return {
-    hours: roundedHours,
-    minutes: roundedMins
+    hours: hours,
+    minutes: fractionalMinutes,  // fractional, not rounded
+    totalMinutes: totalMinutes
   };
 }
 
@@ -1120,29 +1120,19 @@ function tick() {
   handClockSecond.setAttribute("transform", "rotate(" + (secFraction * 360) + ")");
 
   // Solar mean time hands (amber, location-based, offset from civil time)
-  // Take civil time as base, then offset by the difference to solar mean time (rounded to minute)
+  // Calculate offset in fractional minutes, then round for synchronized ticking
   if (haveLocation) {
     var solarMeanTime = getSolarMeanTime(now, currentLat, currentLon);
-    // Calculate offset in minutes between civil and solar time
-    var civilTotalMinutes = wall.hours * 60 + wall.minutes;
-    var solarTotalMinutes = solarMeanTime.hours * 60 + solarMeanTime.minutes;
-    var offsetMinutes = Math.round(solarTotalMinutes - civilTotalMinutes);
     
-    // Debug output - uncomment to see values in console
-    var debugEveryNthFrame = 60; // Log every 60th frame (~1 per second)
-    if (typeof window.debugFrameCounter === 'undefined') window.debugFrameCounter = 0;
-    if (window.debugFrameCounter % debugEveryNthFrame === 0) {
-      console.log("Civil:", wall.hours + ":" + String(wall.minutes).padStart(2,'0'), "Solar:", solarMeanTime.hours + ":" + String(solarMeanTime.minutes).padStart(2,'0'), "Offset min:", offsetMinutes, "solarMinFraction:", solarMinFraction.toFixed(4));
-    }
-    window.debugFrameCounter++;
+    // Calculate offset in fractional minutes
+    var civilFractionalMinutes = wall.hours * 60 + wall.minutes + (wall.seconds + wall.milliseconds / 1000) / 60;
+    var offsetFractionalMinutes = solarMeanTime.totalMinutes - civilFractionalMinutes;
     
-    // Apply offset to civil time's smooth fractions
-    // Add offset to minutes, then add seconds fraction, handle wraparound
-    var offsetTotalSeconds = offsetMinutes * 60;
-    var civilMinutesWithSeconds = wall.minutes * 60 + wall.seconds + wall.milliseconds / 1000;
-    var solarMinutesWithSeconds = (civilMinutesWithSeconds + offsetTotalSeconds) % 3600;
-    var solarSecFraction = solarMinutesWithSeconds / 60;
-    var solarMinFraction = solarSecFraction / 60;
+    // Round offset to nearest minute for synchronized ticking
+    var offsetMinutes = Math.round(offsetFractionalMinutes);
+    
+    // Apply rounded offset to civil time's smooth fractions
+    var solarMinFraction = ((wall.minutes + offsetMinutes + secFraction) % 60) / 60;
     var solarHourOffset = Math.floor((wall.minutes + offsetMinutes) / 60);
     var solarHourFraction = (((wall.hours % 12) + solarHourOffset + solarMinFraction) % 12) / 12;
     
