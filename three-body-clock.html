@@ -96,7 +96,7 @@ svg {
 <circle cx="0" cy="0" r="200" fill="none" stroke="white" stroke-width="2" />
 <circle cx="0" cy="0" r="250" fill="none" stroke="white" stroke-width="2" />
 <circle cx="0" cy="0" r="300" fill="none" stroke="white" stroke-width="2" />
-<circle cx="0" cy="0" r="150" fill="none" stroke="white" stroke-width="2" />
+<circle cx="0" cy="0" r="150" fill="none" stroke="white" stroke-width="3" />
 <g id="sun-events">
 <g id="mark-solar-midnight">
 <line x1="0" y1="-200" x2="0" y2="-162.5" stroke="blue" stroke-width="4" />
@@ -122,15 +122,15 @@ svg {
 <line x1="0" y1="-155" x2="0" y2="-195.5" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 </g>
 <g id="hand-clock-hour">
-<line x1="0" y1="0" x2="0" y2="-70" stroke="crimson" stroke-width="8" stroke-linecap="round" />
+<line x1="0" y1="0" x2="0" y2="-70" stroke="white" stroke-width="8" stroke-linecap="round" />
 </g>
 <g id="hand-clock-minute">
-<line x1="0" y1="0" x2="0" y2="-110" stroke="crimson" stroke-width="5" stroke-linecap="round" />
+<line x1="0" y1="0" x2="0" y2="-110" stroke="white" stroke-width="5" stroke-linecap="round" />
 </g>
 <g id="hand-clock-second">
-<line x1="0" y1="0" x2="0" y2="-130" stroke="crimson" stroke-width="2" stroke-linecap="round" />
+<line x1="0" y1="0" x2="0" y2="-130" stroke="white" stroke-width="2" stroke-linecap="round" />
 </g>
-<circle cx="0" cy="0" r="7" fill="crimson" />
+<circle cx="0" cy="0" r="7" fill="white" />
 </svg>
 <div id="location-info"></div>
 <div id="location-choice">
@@ -430,7 +430,7 @@ function buildSunPhaseMarks(groupId, radius, iconR) {
 }
 
 buildTicks("ticks-hours", 200, 24, 6, "white", "grey", 37.5);
-buildTicks("ticks-clock", 150, 60, 5, "white", "grey", 37.5);
+buildTicks("ticks-clock", 150, 60, 5, "white", "white", 37.5);
 
 var initJD = Date.now() / 86400000 + 2440587.5;
 
