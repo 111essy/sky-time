@@ -1128,8 +1128,21 @@ function tick() {
     var solarTotalMinutes = solarMeanTime.hours * 60 + solarMeanTime.minutes;
     var offsetMinutes = Math.round(solarTotalMinutes - civilTotalMinutes);
     
+    // Debug output - uncomment to see values in console
+    var debugEveryNthFrame = 60; // Log every 60th frame (~1 per second)
+    if (typeof window.debugFrameCounter === 'undefined') window.debugFrameCounter = 0;
+    if (window.debugFrameCounter % debugEveryNthFrame === 0) {
+      console.log("Civil:", wall.hours + ":" + String(wall.minutes).padStart(2,'0'), "Solar:", solarMeanTime.hours + ":" + String(solarMeanTime.minutes).padStart(2,'0'), "Offset min:", offsetMinutes, "solarMinFraction:", solarMinFraction.toFixed(4));
+    }
+    window.debugFrameCounter++;
+    
     // Apply offset to civil time's smooth fractions
-    var solarMinFraction = ((wall.minutes + offsetMinutes + secFraction) % 60) / 60;
+    // Add offset to minutes, then add seconds fraction, handle wraparound
+    var offsetTotalSeconds = offsetMinutes * 60;
+    var civilMinutesWithSeconds = wall.minutes * 60 + wall.seconds + wall.milliseconds / 1000;
+    var solarMinutesWithSeconds = (civilMinutesWithSeconds + offsetTotalSeconds) % 3600;
+    var solarSecFraction = solarMinutesWithSeconds / 60;
+    var solarMinFraction = solarSecFraction / 60;
     var solarHourOffset = Math.floor((wall.minutes + offsetMinutes) / 60);
     var solarHourFraction = (((wall.hours % 12) + solarHourOffset + solarMinFraction) % 12) / 12;
     
