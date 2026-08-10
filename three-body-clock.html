@@ -158,6 +158,17 @@ var cx = 0, cy = 0;
 
 var ROTTERDAM_LAT = 51.9225;
 var ROTTERDAM_LON = 4.47917;
+var SKY_ZONE_STEP_MINUTES = 20; // 5 degrees of longitude
+
+// Sky-time zone offset from UTC, in minutes: the nearest multiple of
+// 20 to the location's true mean solar offset (4 minutes per degree
+// east). 72 zones worldwide, +00:00 at Greenwich.
+function skyZoneOffsetMinutes(lonDegEast) {
+  var trueOffset = lonDegEast * 4;
+  var z = Math.round(trueOffset / SKY_ZONE_STEP_MINUTES) * SKY_ZONE_STEP_MINUTES;
+  if (z === -720) z = 720; // dateline: normalise to +12:00
+  return z;
+}
 
 // Copied verbatim from files/calendar-mechanism.html (there named ph, not phJDE)
 var R = Math.PI / 180;
@@ -642,13 +653,14 @@ function updateSunMarks(p) {
 
 function updateLocationInfo() {
   var text;
+  var skyZoneText = currentLon === null ? null : formatOffsetMinutes(skyZoneOffsetMinutes(currentLon));
   if (locationStatus === "manual") {
-    text = (manualCityLabel || "Selected city") + " · timezone: " + displayTimeZone + " · manual";
+    text = (manualCityLabel || "Selected city") + " · timezone: " + displayTimeZone + " · sky zone: " + skyZoneText + " · manual";
   } else if (locationStatus === "located") {
     var latDir = currentLat >= 0 ? "N" : "S";
     var lonDir = currentLon >= 0 ? "E" : "W";
     text = Math.abs(currentLat).toFixed(2) + " " + latDir + ", "
-      + Math.abs(currentLon).toFixed(2) + " " + lonDir + " · timezone: " + tzName + " · located";
+      + Math.abs(currentLon).toFixed(2) + " " + lonDir + " · timezone: " + tzName + " · sky zone: " + skyZoneText + " · located";
   } else if (locationMode === null) {
     text = ""; // the choice buttons below speak for themselves
   } else if (locationMode === "manual") {
@@ -1091,6 +1103,21 @@ function minutesToLocalTime(minUTC, utcOffsetHours) {
   return (hh < 10 ? "0" : "") + hh + ":" + (mm < 10 ? "0" : "") + mm;
 }
 
+function formatOffsetMinutes(totalMinutes) {
+  var sign = totalMinutes < 0 ? "-" : "+";
+  var absMinutes = Math.abs(totalMinutes);
+  var hh = Math.floor(absMinutes / 60);
+  var mm = absMinutes % 60;
+  return sign + (hh < 10 ? "0" : "") + hh + ":" + (mm < 10 ? "0" : "") + mm;
+}
+
+function minutesOfDayToClockText(totalMinutes) {
+  var wrapped = ((totalMinutes % 1440) + 1440) % 1440;
+  var hh = Math.floor(wrapped / 60);
+  var mm = Math.floor(wrapped % 60);
+  return (hh < 10 ? "0" : "") + hh + ":" + (mm < 10 ? "0" : "") + mm;
+}
+
 [
   { date: [2026, 8, 9], utcOffset: 2, expect: "06:17 / 21:18 CEST" },
   { date: [2025, 12, 21], utcOffset: 1, expect: "08:48 / 16:33 CET" },
@@ -1102,6 +1129,29 @@ function minutesToLocalTime(minUTC, utcOffsetHours) {
   console.log("Sunrise/sunset " + c.date.join("-") + ":", got, " expect:", c.expect);
 });
 
+[
+  { lon: 4.47917, expect: "+00:20" },
+  { lon: -0.1276, expect: "+00:00" },
+  { lon: -74.006, expect: "-05:00" },
+  { lon: 139.692, expect: "+09:20" },
+  { lon: 36.817, expect: "+02:20" },
+  { lon: -78.467, expect: "-05:20" },
+  { lon: 180, expect: "+12:00" },
+  { lon: -180, expect: "+12:00" }
+].forEach(function(c) {
+  console.log("Sky zone lon " + c.lon + " ->", formatOffsetMinutes(skyZoneOffsetMinutes(c.lon)), " expect:", c.expect);
+});
+
+(function() {
+  var now = new Date();
+  var skyMinutesOfDay = ((now.getUTCHours() * 60 + now.getUTCMinutes()
+    + (now.getUTCSeconds() + now.getUTCMilliseconds() / 1000) / 60
+    + skyZoneOffsetMinutes(ROTTERDAM_LON)) % 1440 + 1440) % 1440;
+  var civil = displayWallClock(now);
+  var civilMinutesOfDay = civil.hours * 60 + civil.minutes + (civil.seconds + civil.milliseconds / 1000) / 60;
+  console.log("Rotterdam sky time / civil time:", minutesOfDayToClockText(skyMinutesOfDay), "/", minutesOfDayToClockText(civilMinutesOfDay));
+})();
+
 var handHours = document.getElementById("hand-hours");
 var handLunar = document.getElementById("hand-lunar");
 var handSolar = document.getElementById("hand-solar");
@@ -1110,38 +1160,6 @@ var handSolarMeanMinute = document.getElementById("hand-solar-mean-minute");
 var handClockHour = document.getElementById("hand-clock-hour");
 var handClockMinute = document.getElementById("hand-clock-minute");
 var handClockSecond = document.getElementById("hand-clock-second");
-
-// Calculate solar mean time (location-based, returns fractional minutes for offset calculation)
-function getSolarMeanTime(instant, lat, lon) {
-  var jde = instant.getTime() / 86400000 + 2440587.5;
-  var solar = solarPosition(jde);
-  
-  // UTC time in hours (including fractional seconds)
-  var utcHours = instant.getUTCHours() + instant.getUTCMinutes() / 60 + (instant.getUTCSeconds() + instant.getUTCMilliseconds() / 1000) / 3600;
-  
-  // Equation of time in hours (it's in minutes, divide by 60)
-  var eotHours = solar.eot / 60;
-  
-  // Longitude correction: each degree is 4 minutes (360° / 24h = 15°/h = 4 min/°)
-  var lonHours = lon / 15;
-  
-  // Solar mean time = UTC + EOT + longitude correction
-  var solarMeanHours = utcHours + eotHours + lonHours;
-  
-  // Normalize to 0-24 range
-  solarMeanHours = ((solarMeanHours % 24) + 24) % 24;
-  
-  // Return fractional minutes (not rounded) for precise offset calculation
-  var totalMinutes = solarMeanHours * 60;
-  var hours = Math.floor(totalMinutes / 60) % 24;
-  var fractionalMinutes = totalMinutes % 60;
-  
-  return {
-    hours: hours,
-    minutes: fractionalMinutes,  // fractional, not rounded
-    totalMinutes: totalMinutes
-  };
-}
 
 function tick() {
   var now = new Date();
@@ -1165,25 +1183,17 @@ function tick() {
   handClockMinute.setAttribute("transform", "rotate(" + (minFraction * 360) + ")");
   handClockSecond.setAttribute("transform", "rotate(" + (secFraction * 360) + ")");
 
-  // Solar mean time hands (amber, location-based, offset from civil time)
-  // Calculate offset in fractional minutes, then round for synchronized ticking
+  // Sky-time zone hands (amber, longitude-zoned and smooth)
   if (haveLocation) {
-    var solarMeanTime = getSolarMeanTime(now, currentLat, currentLon);
-    
-    // Calculate offset in fractional minutes
-    var civilFractionalMinutes = wall.hours * 60 + wall.minutes + (wall.seconds + wall.milliseconds / 1000) / 60;
-    var offsetFractionalMinutes = solarMeanTime.totalMinutes - civilFractionalMinutes;
-    
-    // Round offset to nearest minute for synchronized ticking
-    var offsetMinutes = Math.round(offsetFractionalMinutes);
-    
-    // Apply rounded offset to civil time's smooth fractions
-    var solarMinFraction = ((wall.minutes + offsetMinutes + secFraction) % 60) / 60;
-    var solarHourOffset = Math.floor((wall.minutes + offsetMinutes) / 60);
-    var solarHourFraction = (((wall.hours % 12) + solarHourOffset + solarMinFraction) % 12) / 12;
-    
-    handSolarMeanHour.setAttribute("transform", "rotate(" + (solarHourFraction * 360) + ")");
-    handSolarMeanMinute.setAttribute("transform", "rotate(" + (solarMinFraction * 360) + ")");
+    var utcMinutesNow = now.getUTCHours() * 60 + now.getUTCMinutes()
+      + (now.getUTCSeconds() + now.getUTCMilliseconds() / 1000) / 60;
+    var skyMinutesOfDay = ((utcMinutesNow + skyZoneOffsetMinutes(currentLon)) % 1440 + 1440) % 1440;
+    var skyHour12 = (skyMinutesOfDay / 60) % 12;
+    var skyMinFraction = (skyMinutesOfDay % 60) / 60;
+    var skyHourFraction = (skyHour12 + skyMinFraction) / 12;
+
+    handSolarMeanHour.setAttribute("transform", "rotate(" + (skyHourFraction * 360) + ")");
+    handSolarMeanMinute.setAttribute("transform", "rotate(" + (skyMinFraction * 360) + ")");
   } else {
     handSolarMeanHour.setAttribute("transform", "rotate(0)");
     handSolarMeanMinute.setAttribute("transform", "rotate(0)");
