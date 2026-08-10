@@ -111,6 +111,13 @@ svg {
 <g id="ticks-lunar"></g>
 <g id="ticks-solar"></g>
 <g id="ticks-clock"></g>
+<!-- Solar mean time hands (amber, 20% smaller, no hub) -->
+<g id="hand-solar-mean-hour">
+<line x1="0" y1="0" x2="0" y2="-56" stroke="#ffb300" stroke-width="6.4" stroke-linecap="round" />
+</g>
+<g id="hand-solar-mean-minute">
+<line x1="0" y1="0" x2="0" y2="-88" stroke="#ffb300" stroke-width="4" stroke-linecap="round" />
+</g>
 <!-- All crimson hands are kept last so they always render above every ring, tick and mark. -->
 <g id="hand-solar">
 <line x1="0" y1="-255" x2="0" y2="-295.5" stroke="crimson" stroke-width="6" stroke-linecap="round" />
@@ -1049,9 +1056,44 @@ function minutesToLocalTime(minUTC, utcOffsetHours) {
 var handHours = document.getElementById("hand-hours");
 var handLunar = document.getElementById("hand-lunar");
 var handSolar = document.getElementById("hand-solar");
+var handSolarMeanHour = document.getElementById("hand-solar-mean-hour");
+var handSolarMeanMinute = document.getElementById("hand-solar-mean-minute");
 var handClockHour = document.getElementById("hand-clock-hour");
 var handClockMinute = document.getElementById("hand-clock-minute");
 var handClockSecond = document.getElementById("hand-clock-second");
+
+// Calculate solar mean time (location-based, rounded to minute)
+function getSolarMeanTime(instant, lat, lon) {
+  var jde = instant.getTime() / 86400000 + 2440587.5;
+  var solar = solarPosition(jde);
+  
+  // UTC time in hours
+  var utcHours = instant.getUTCHours() + instant.getUTCMinutes() / 60 + instant.getUTCSeconds() / 3600;
+  
+  // Equation of time in hours (it's in minutes, divide by 60)
+  var eotHours = solar.eot / 60;
+  
+  // Longitude correction: each degree is 4 minutes (360° / 24h = 15°/h = 4 min/°)
+  var lonHours = lon / 15;
+  
+  // Solar mean time = UTC + EOT + longitude correction
+  var solarMeanHours = utcHours + eotHours + lonHours;
+  
+  // Normalize to 0-24 range
+  solarMeanHours = ((solarMeanHours % 24) + 24) % 24;
+  
+  // Round to nearest minute
+  var solarMeanMinutes = Math.round(solarMeanHours * 60);
+  var roundedHours = Math.floor(solarMeanMinutes / 60);
+  var roundedMins = solarMeanMinutes % 60;
+  
+  return {
+    hours: roundedHours,
+    minutes: roundedMins,
+    hourFraction: roundedHours / 12,
+    minuteFraction: roundedMins / 60
+  };
+}
 
 function tick() {
   var now = new Date();
@@ -1074,6 +1116,18 @@ function tick() {
   handClockHour.setAttribute("transform", "rotate(" + (clockHourFraction * 360) + ")");
   handClockMinute.setAttribute("transform", "rotate(" + (minFraction * 360) + ")");
   handClockSecond.setAttribute("transform", "rotate(" + (secFraction * 360) + ")");
+
+  // Solar mean time hands (amber, location-based, rounded to minute)
+  if (haveLocation) {
+    var solarMeanTime = getSolarMeanTime(now, currentLat, currentLon);
+    var solarMeanHourFraction = (solarMeanTime.hours % 12 + solarMeanTime.minuteFraction) / 12;
+    var solarMeanMinuteFraction = solarMeanTime.minuteFraction;
+    handSolarMeanHour.setAttribute("transform", "rotate(" + (solarMeanHourFraction * 360) + ")");
+    handSolarMeanMinute.setAttribute("transform", "rotate(" + (solarMeanMinuteFraction * 360) + ")");
+  } else {
+    handSolarMeanHour.setAttribute("transform", "rotate(0)");
+    handSolarMeanMinute.setAttribute("transform", "rotate(0)");
+  }
 
   var jd = Date.now() / 86400000 + 2440587.5;
   var lunarFraction = lunarPointerFraction(jd);
