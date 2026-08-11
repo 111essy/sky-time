@@ -466,7 +466,7 @@ function buildSunPhaseMarks(groupId, radius, iconR) {
   group.appendChild(phaseGlyph(-radius, 0, iconR, "half-top", "yellow"));
 }
 
-buildTicks("ticks-hours", 200, 24, 6, "white", "grey", 37.5);
+buildTicks("ticks-hours", 200, 24, 6, "white", "white", 37.5);
 buildTicks("ticks-clock", 150, 60, 5, "white", "white", 37.5);
 
 var initJD = Date.now() / 86400000 + 2440587.5;
@@ -693,6 +693,7 @@ var twilightPaths = [];
   for (var i = 0; i < TWILIGHT_POOL_SIZE; i++) {
     var path = document.createElementNS(svgNS, "path");
     path.setAttribute("stroke", "none");
+    path.setAttribute("opacity", "0.8");
     group.appendChild(path);
     twilightPaths.push(path);
   }
