@@ -173,6 +173,15 @@ function skyZoneOffsetMinutes(lonDegEast) {
   return z;
 }
 
+// The zone's own meridian (always a multiple of 5 degrees), not the
+// location's exact longitude. The machine computes solar events for this
+// meridian throughout — see computeDayEvents/refreshDayEventCache — so
+// solar noon lands exactly on the zone's mean time, not a few minutes off
+// for wherever inside the zone the location happens to sit.
+function zoneMeridianDeg(lonDegEast) {
+  return skyZoneOffsetMinutes(lonDegEast) / 4;
+}
+
 // Copied verbatim from files/calendar-mechanism.html (there named ph, not phJDE)
 var R = Math.PI / 180;
 var SM = 29.530589;
@@ -588,14 +597,21 @@ function refreshDayEventCache(refDate) {
   var ref = refDate || new Date();
   var wall = displayWallClock(ref);
 
+  // Solar events are computed for the ZONE MERIDIAN, not the exact
+  // longitude — currentLon only selects which zone applies (see
+  // zoneMeridianDeg). This is what keeps the day ring's noon anchor and the
+  // amber sky-time hands (tick(), below) in agreement: both read the same
+  // zone's true solar noon.
+  var meridian = zoneMeridianDeg(currentLon);
+
   var todayNoon = displayLocalNoon(ref);
-  cachedToday = computeDayEvents(todayNoon, displayOffsetMinutes(todayNoon), currentLat, currentLon);
+  cachedToday = computeDayEvents(todayNoon, displayOffsetMinutes(todayNoon), currentLat, meridian);
 
   // Date.UTC with date+1 (not +24h) so a DST-transition day — which isn't
   // 24h long — still rolls over to the correct next calendar day.
   var tomorrowGuess = new Date(Date.UTC(wall.year, wall.month, wall.date + 1, 12, 0, 0, 0) + wall.offsetMin * 60000);
   var tomorrowNoon = displayLocalNoon(tomorrowGuess);
-  cachedTomorrow = computeDayEvents(tomorrowNoon, displayOffsetMinutes(tomorrowNoon), currentLat, currentLon);
+  cachedTomorrow = computeDayEvents(tomorrowNoon, displayOffsetMinutes(tomorrowNoon), currentLat, meridian);
 
   lastLocalDateStr = wall.year + "-" + wall.month + "-" + wall.date;
 }
@@ -1273,6 +1289,9 @@ function minutesOfDayToClockText(totalMinutes) {
   return (hh < 10 ? "0" : "") + hh + ":" + (mm < 10 ? "0" : "") + mm;
 }
 
+// Exact Rotterdam coordinates — verifies the astronomy itself, unchanged
+// by the zone-meridian change below (which is about the machine, not
+// sunEvents()'s correctness).
 [
   { date: [2026, 8, 9], utcOffset: 2, expect: "06:17 / 21:18 CEST" },
   { date: [2025, 12, 21], utcOffset: 1, expect: "08:48 / 16:33 CET" },
@@ -1281,8 +1300,82 @@ function minutesOfDayToClockText(totalMinutes) {
   var localNoonDate = new Date(c.date[0], c.date[1] - 1, c.date[2], 12, 0, 0, 0);
   var ev = computeDayEvents(localNoonDate, localNoonDate.getTimezoneOffset(), ROTTERDAM_LAT, ROTTERDAM_LON);
   var got = minutesToLocalTime(ev.sunrise, c.utcOffset) + " / " + minutesToLocalTime(ev.sunset, c.utcOffset);
-  console.log("Sunrise/sunset " + c.date.join("-") + ":", got, " expect:", c.expect);
+  console.log("Sunrise/sunset " + c.date.join("-") + " (exact coords):", got, " expect:", c.expect);
+
+  // Same date, but at the zone meridian (+00:20's own 5-degree meridian,
+  // 5.0 deg E) instead of Rotterdam's exact 4.47917 deg E — this IS what
+  // the live machine now computes (see refreshDayEventCache). The
+  // difference is the few minutes between the zone meridian and Rotterdam's
+  // true longitude, not an error.
+  var evZone = computeDayEvents(localNoonDate, localNoonDate.getTimezoneOffset(), ROTTERDAM_LAT, zoneMeridianDeg(ROTTERDAM_LON));
+  var gotZone = minutesToLocalTime(evZone.sunrise, c.utcOffset) + " / " + minutesToLocalTime(evZone.sunset, c.utcOffset);
+  var sunriseDiff = evZone.sunrise - ev.sunrise;
+  var sunsetDiff = evZone.sunset - ev.sunset;
+  console.log("Sunrise/sunset " + c.date.join("-") + " (zone meridian):", gotZone,
+    " diff vs exact coords:", sunriseDiff.toFixed(2) + "min / " + sunsetDiff.toFixed(2) + "min");
 });
+
+// At the exact instant of true solar noon (computed at the zone meridian),
+// the amber sky-time hand and the day ring's own hand position must both
+// read noon — that's the whole point of computing for the zone meridian
+// (fix 2) and including the equation of time (fix 1) together. Missing fix
+// 1 makes this scatter with the seasons (+-16min); missing fix 2 leaves a
+// small, roughly constant offset (the ~2min gap between Rotterdam's exact
+// longitude and its zone's 5-degree meridian).
+(function verifyZoneMeridianSolarNoon() {
+  var savedToday = cachedToday, savedTomorrow = cachedTomorrow;
+  var savedLat = currentLat, savedLon = currentLon;
+  var dates = [
+    [2026, 2, 11], [2026, 5, 14], [2026, 6, 21],
+    [2026, 7, 26], [2026, 11, 3], [2026, 12, 21]
+  ];
+  var zoneMeridian = zoneMeridianDeg(ROTTERDAM_LON);
+  var zoneOffset = skyZoneOffsetMinutes(ROTTERDAM_LON);
+  var handMinutes = [];
+  try {
+    currentLat = ROTTERDAM_LAT;
+    currentLon = ROTTERDAM_LON;
+    dates.forEach(function(dparts) {
+      var y = dparts[0], m = dparts[1], d = dparts[2];
+      var refDate = new Date(y, m - 1, d, 12, 0, 0, 0);
+      var jdRef = refDate.getTime() / 86400000 + 2440587.5;
+      var ev = sunEvents(jdRef, ROTTERDAM_LAT, zoneMeridian);
+      var utcMidnightMs = Date.UTC(refDate.getUTCFullYear(), refDate.getUTCMonth(), refDate.getUTCDate(), 0, 0, 0, 0);
+      var noonInstantMs = utcMidnightMs + ev.noon * 60000;
+      var noonInstant = new Date(noonInstantMs);
+
+      // The amber hand's own formula (see tick()), evaluated at this exact instant.
+      var instantJD = noonInstantMs / 86400000 + 2440587.5;
+      var eotNow = solarPosition(instantJD).eot;
+      var skyMinutesOfDay = (((noonInstantMs / 60000) + zoneOffset + eotNow) % 1440 + 1440) % 1440;
+      handMinutes.push(skyMinutesOfDay);
+      console.log("Amber-hand time at solar noon, " + y + "-" + m + "-" + d + ":",
+        minutesOfDayToClockText(skyMinutesOfDay), "(" + skyMinutesOfDay.toFixed(4) + " min, expect 720.0000)");
+
+      // The day ring's own hand position at this instant, via the exact same
+      // civil-frame blend + noon-anchor reorientation tick() uses. today ==
+      // tomorrow here (single-day snapshot) so blendFraction is a no-op.
+      var civilOffset = noonInstant.getTimezoneOffset();
+      var dayEv = computeDayEvents(noonInstant, civilOffset, ROTTERDAM_LAT, zoneMeridian);
+      cachedToday = dayEv;
+      cachedTomorrow = dayEv;
+      var wallMinutes = ((noonInstantMs / 60000 - civilOffset) % 1440 + 1440) % 1440;
+      var hourFraction = wallMinutes / 1440;
+      var anchor = currentNoonAnchor(hourFraction);
+      var ringDeg = ((hourFraction - anchor) % 1 + 1) % 1 * 360;
+      var ringDegSigned = ringDeg > 180 ? ringDeg - 360 : ringDeg;
+      console.log("Day ring hand position at solar noon, " + y + "-" + m + "-" + d + ":",
+        ringDegSigned.toFixed(4) + "° from top (expect 0.0000°)");
+    });
+    var minH = Math.min.apply(null, handMinutes), maxH = Math.max.apply(null, handMinutes);
+    console.log("Amber-hand solar-noon spread across all six dates:", (maxH - minH).toFixed(4) + "min (expect under 0.05min)");
+  } finally {
+    cachedToday = savedToday;
+    cachedTomorrow = savedTomorrow;
+    currentLat = savedLat;
+    currentLon = savedLon;
+  }
+})();
 
 [
   { lon: 4.47917, expect: "+00:20" },
@@ -1427,9 +1520,15 @@ function tick() {
   // milliseconds since the Unix epoch, which is itself a UTC midnight, so
   // dividing by 60000 and taking %1440 gives UTC minutes-of-day directly —
   // continuous to the millisecond, no getUTCHours/Minutes/Seconds
-  // decomposition, no wall-clock component to desync from.
+  // decomposition, no wall-clock component to desync from. The equation of
+  // time is added so this reads TRUE solar time for the zone meridian, not
+  // mean time — matching the day ring, which is anchored to true solar noon
+  // via currentNoonAnchor(). Without it the two could disagree by up to 16
+  // minutes.
   if (haveLocation) {
-    var skyMinutesOfDay = (((Date.now() / 60000) + skyZoneOffsetMinutes(currentLon))
+    var skyJD = Date.now() / 86400000 + 2440587.5;
+    var skyEot = solarPosition(skyJD).eot;
+    var skyMinutesOfDay = (((Date.now() / 60000) + skyZoneOffsetMinutes(currentLon) + skyEot)
       % 1440 + 1440) % 1440;
     var skyMinFraction = (skyMinutesOfDay % 60) / 60;
     var skyHour12 = Math.floor(skyMinutesOfDay / 60) % 12; // integer hour only — skyMinFraction supplies the fraction
