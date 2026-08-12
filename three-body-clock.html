@@ -398,6 +398,79 @@ var TWILIGHT_DUSK_KEYS = ["sunset", "civilDusk", "nauticalDusk", "astronomicalDu
 var TWILIGHT_DAWN_KEYS = ["sunrise", "civilDawn", "nauticalDawn", "astronomicalDawn"];
 var TWILIGHT_COLORS = ["#9FCFF5", "#5B8FD4", "#33578F", "#1E2F52", "#131C33"]; // day, civil, nautical, astronomical, night
 
+// --- Klima: Ptolemy's latitude bands, defined by longest-day length. ---
+//
+// Equal-degree latitude bands would be wrong: a degree of latitude is
+// negligible near the equator and dominant near the poles (the same
+// nonlinearity sunEvents' cosH already deals with). Quantising the OUTPUT
+// (longest day, in 20-minute steps — the same step as the 20-minute
+// longitude zones) instead gives uniform error and bands that narrow
+// automatically where the sky actually changes fastest. 36 bands per
+// hemisphere, 72 worldwide — this is what astrolabe plates were
+// historically cut for.
+
+var KLIMA_STEP_HOURS = 1 / 3; // 20 minutes
+var KLIMA_MAX_LAT = 66.8; // just past the polar circle, where the scale saturates
+var SOLSTICE_DECLINATION = 23.44; // fixed, not solarPosition()'s slowly-drifting obliquity — klima is a latitude-only ideal, not tied to a date
+
+// Longest day, in hours, at latitude latDeg — the summer solstice's day
+// length, using the same h0 = -0.833 threshold as sunEvents. Only the
+// magnitude of latDeg matters (day length is symmetric between
+// hemispheres; klimaLatitude, below, reapplies the sign). Returns 24 at and
+// above the polar circle, where the sun never sets at the solstice.
+function longestDayHours(latDeg) {
+  var latR = Math.abs(latDeg) * R;
+  var decR = SOLSTICE_DECLINATION * R;
+  var cosH = (Math.sin(-0.833 * R) - Math.sin(latR) * Math.sin(decR)) / (Math.cos(latR) * Math.cos(decR));
+  if (cosH <= -1) return 24; // polar day at the solstice: the sun never sets
+  if (cosH >= 1) return 0; // never reached for latitudes below the polar circle, guarded anyway
+  var H = Math.acos(cosH) / R;
+  return 2 * H / 15;
+}
+
+// The klima band a latitude falls in: its longest day, rounded to the
+// nearest 20 minutes.
+function klimaHours(latDeg) {
+  return Math.round(longestDayHours(latDeg) / KLIMA_STEP_HOURS) * KLIMA_STEP_HOURS;
+}
+
+// True above the polar circle: the klima scale has saturated (longest day
+// >= 24h) and there is no band to represent this latitude with.
+function isPolarLatitude(latDeg) {
+  return longestDayHours(latDeg) >= 23.99;
+}
+
+// The band's representative latitude: invert longestDayHours by bisection
+// (it's monotonically increasing in |lat|, so bisection is safe) to find
+// the latitude whose OWN longest day equals this one's rounded klima band,
+// then reapply the sign of the input. This is the latitude the machine
+// actually uses for every sunEvents/computeDayEvents call — two locations
+// in the same band see an identical clock. Returns null in the polar case
+// (see isPolarLatitude) rather than clamping to the polar circle, since a
+// clamped value would silently misrepresent a real polar latitude as a
+// mundane 66.5-degree one.
+function klimaLatitude(latDeg) {
+  if (isPolarLatitude(latDeg)) return null;
+  var target = klimaHours(latDeg);
+  var lo = 0, hi = KLIMA_MAX_LAT;
+  for (var i = 0; i < 50; i++) {
+    var mid = (lo + hi) / 2;
+    if (longestDayHours(mid) < target) lo = mid; else hi = mid;
+  }
+  var representative = (lo + hi) / 2;
+  return latDeg < 0 ? -representative : representative;
+}
+
+// "16h40m" / "12h00m" / "21h00m" — klimaHours() is always a multiple of
+// 1/3 hour by construction, so rounding to the nearest minute here is just
+// float cleanup, not a second quantisation.
+function formatKlimaHours(hours) {
+  var totalMinutes = Math.round(hours * 60);
+  var hh = Math.floor(totalMinutes / 60);
+  var mm = totalMinutes % 60;
+  return hh + "h" + (mm < 10 ? "0" : "") + mm + "m";
+}
+
 // Calendar year of the December solstice (longitude 270) at or before t
 function solsticeYear(t) {
   var g = new Date((t - 2440587.5) * 86400000).getUTCFullYear();
@@ -591,27 +664,46 @@ function blendFraction(fA, fB, p) {
 // The day-before/day-after event sets, cached and only recomputed on a
 // location change or a local-date rollover — NOT every frame. The blended
 // positions computed from them, below, are recomputed every frame.
+//
+// currentKlimaLat is the representative latitude actually fed to
+// sunEvents/computeDayEvents (see klimaLatitude) — null above the polar
+// circle, where the klima scale saturates and there is no band.
 var cachedToday, cachedTomorrow, lastLocalDateStr;
+var currentKlimaLat = null;
 var lastSunMarksCheck = 0;
 function refreshDayEventCache(refDate) {
   var ref = refDate || new Date();
   var wall = displayWallClock(ref);
 
-  // Solar events are computed for the ZONE MERIDIAN, not the exact
-  // longitude — currentLon only selects which zone applies (see
-  // zoneMeridianDeg). This is what keeps the day ring's noon anchor and the
-  // amber sky-time hands (tick(), below) in agreement: both read the same
-  // zone's true solar noon.
+  // Solar events are computed for the ZONE MERIDIAN and the KLIMA BAND, not
+  // exact longitude/latitude — currentLon/currentLat only select which zone
+  // and band apply (see zoneMeridianDeg/klimaLatitude). This is what keeps
+  // the day ring's noon anchor and the amber sky-time hands (tick(), below)
+  // in agreement: both read the same zone's true solar noon, and any two
+  // locations sharing a zone and a klima band see an identical clock.
   var meridian = zoneMeridianDeg(currentLon);
+  currentKlimaLat = klimaLatitude(currentLat);
+
+  if (currentKlimaLat === null) {
+    // Polar: the klima scale has saturated (longest day >= 24h at the
+    // solstice), so there is no representative band latitude to compute
+    // sunrise/sunset from. Leave the caches empty — updateSunMarks and
+    // updateTwilightBands already hide everything whenever the day ring's
+    // noon anchor is null, which it will be with no cache to read.
+    cachedToday = null;
+    cachedTomorrow = null;
+    lastLocalDateStr = wall.year + "-" + wall.month + "-" + wall.date;
+    return;
+  }
 
   var todayNoon = displayLocalNoon(ref);
-  cachedToday = computeDayEvents(todayNoon, displayOffsetMinutes(todayNoon), currentLat, meridian);
+  cachedToday = computeDayEvents(todayNoon, displayOffsetMinutes(todayNoon), currentKlimaLat, meridian);
 
   // Date.UTC with date+1 (not +24h) so a DST-transition day — which isn't
   // 24h long — still rolls over to the correct next calendar day.
   var tomorrowGuess = new Date(Date.UTC(wall.year, wall.month, wall.date + 1, 12, 0, 0, 0) + wall.offsetMin * 60000);
   var tomorrowNoon = displayLocalNoon(tomorrowGuess);
-  cachedTomorrow = computeDayEvents(tomorrowNoon, displayOffsetMinutes(tomorrowNoon), currentLat, meridian);
+  cachedTomorrow = computeDayEvents(tomorrowNoon, displayOffsetMinutes(tomorrowNoon), currentKlimaLat, meridian);
 
   lastLocalDateStr = wall.year + "-" + wall.month + "-" + wall.date;
 }
@@ -677,10 +769,13 @@ function currentNoonAnchor(p) {
 // blended (noon, sunrise, sunset) are solar; anchor (see currentNoonAnchor)
 // is what reorients that civil-paced blend so the ring reads as solar time.
 function updateSunMarks(p, anchor) {
-  // No location established yet (or it failed) — hide all four
-  // location-dependent marks rather than draw them from a guess. Same
-  // display:none mechanism placeSunGlyph uses below for polar day/night.
-  if (locationStatus !== "located" && locationStatus !== "manual") {
+  // No location established yet (or it failed), OR the location is above
+  // the polar circle and the klima scale has saturated (see
+  // refreshDayEventCache) — either way there's no cache to read, and
+  // tick() already signals both cases with a null anchor. Hide all four
+  // marks rather than draw them from a guess, same display:none mechanism
+  // placeSunGlyph uses below for a single day's polar sunrise/sunset.
+  if (anchor === null) {
     markMidnight.setAttribute("display", "none");
     markNoon.setAttribute("display", "none");
     markSunrise.setAttribute("display", "none");
@@ -754,9 +849,16 @@ function buildTwilightSegments(p, anchor) {
   }
 
   if (pairs[0].dusk === null || pairs[0].dawn === null) {
+    // A single day without sunrise/sunset near the polar circle — distinct
+    // from the klima-polar case (isPolarLatitude), which is excluded before
+    // this function is ever called. Uses the same klima latitude as every
+    // other computation on this ring (currentKlimaLat is only null in that
+    // already-excluded case; currentLat is a last-resort fallback so this
+    // never crashes even if that invariant is ever violated).
     var jd = Date.now() / 86400000 + 2440587.5;
     var dec = solarPosition(jd).declination;
-    var altNoon = Math.asin(Math.sin(currentLat * R) * Math.sin(dec * R) + Math.cos(currentLat * R) * Math.cos(dec * R)) / R;
+    var latForAlt = currentKlimaLat !== null ? currentKlimaLat : currentLat;
+    var altNoon = Math.asin(Math.sin(latForAlt * R) * Math.sin(dec * R) + Math.cos(latForAlt * R) * Math.cos(dec * R)) / R;
     return [{ from: 0, to: 1, color: altNoon > TWILIGHT_H0[0] ? TWILIGHT_COLORS[0] : TWILIGHT_COLORS[4] }];
   }
 
@@ -822,16 +924,28 @@ function updateTwilightBands(p, anchor) {
   }
 }
 
+// "klima 16h40m (51.6 N)" or "klima POLAR" — two locations sharing a solar
+// zone and a klima band see an identical clock, so both settings are shown
+// together, and this is the single place that combines them for display.
+function klimaDisplayText(latDeg) {
+  if (latDeg === null) return null;
+  if (isPolarLatitude(latDeg)) return "klima POLAR";
+  var representative = klimaLatitude(latDeg);
+  var dir = representative >= 0 ? "N" : "S";
+  return "klima " + formatKlimaHours(klimaHours(latDeg)) + " (" + Math.abs(representative).toFixed(1) + " " + dir + ")";
+}
+
 function updateLocationInfo() {
   var text;
   var skyZoneText = currentLon === null ? null : formatOffsetMinutes(skyZoneOffsetMinutes(currentLon));
+  var klimaText = klimaDisplayText(currentLat);
   if (locationStatus === "manual") {
-    text = (manualCityLabel || "Selected city") + " · timezone: " + displayTimeZone + " · solar zone: " + skyZoneText + " · manual";
+    text = (manualCityLabel || "Selected city") + " · timezone: " + displayTimeZone + " · solar zone: " + skyZoneText + " · " + klimaText + " · manual";
   } else if (locationStatus === "located") {
     var latDir = currentLat >= 0 ? "N" : "S";
     var lonDir = currentLon >= 0 ? "E" : "W";
     text = Math.abs(currentLat).toFixed(2) + " " + latDir + ", "
-      + Math.abs(currentLon).toFixed(2) + " " + lonDir + " · timezone: " + tzName + " · solar zone: " + skyZoneText + " · located";
+      + Math.abs(currentLon).toFixed(2) + " " + lonDir + " · timezone: " + tzName + " · solar zone: " + skyZoneText + " · " + klimaText + " · located";
   } else if (locationMode === null) {
     text = ""; // the choice buttons below speak for themselves
   } else if (locationMode === "manual") {
@@ -1377,6 +1491,34 @@ function minutesOfDayToClockText(totalMinutes) {
   }
 })();
 
+// Klima: the six reference latitudes from the spec — 51.9225 -> 16h40m
+// (+51.65), 0.0 -> 12h00m (+0.00), -1.2921 -> 12h20m (-3.66), -33.8688 ->
+// 14h20m (-33.02), 64.1466 -> 21h00m (+63.97), 69.6492 -> POLAR.
+[51.9225, 0.0, -1.2921, -33.8688, 64.1466, 69.6492].forEach(function(lat) {
+  if (isPolarLatitude(lat)) {
+    console.log("Klima lat " + lat + " -> POLAR, no band");
+    return;
+  }
+  var representative = klimaLatitude(lat);
+  var sign = representative >= 0 ? "+" : "";
+  console.log("Klima lat " + lat + " -> klima " + formatKlimaHours(klimaHours(lat)) +
+    ", representative " + sign + representative.toFixed(2));
+});
+
+// Today's sunrise/sunset at Rotterdam's exact latitude versus its klima
+// band's representative latitude (longitude held fixed at Rotterdam's exact
+// coordinate, isolating the latitude substitution) — must stay under 5min.
+(function verifyKlimaSunriseSunset() {
+  var noon = localNoon(new Date());
+  var jd = noon.getTime() / 86400000 + 2440587.5;
+  var evExact = sunEvents(jd, ROTTERDAM_LAT, ROTTERDAM_LON);
+  var evKlima = sunEvents(jd, klimaLatitude(ROTTERDAM_LAT), ROTTERDAM_LON);
+  var sunriseDiff = evKlima.sunrise - evExact.sunrise;
+  var sunsetDiff = evKlima.sunset - evExact.sunset;
+  console.log("Today's sunrise/sunset, Rotterdam exact latitude vs klima latitude — diff:",
+    sunriseDiff.toFixed(2) + "min / " + sunsetDiff.toFixed(2) + "min (expect under 5min)");
+})();
+
 [
   { lon: 4.47917, expect: "+00:20" },
   { lon: -0.1276, expect: "+00:00" },
@@ -1505,8 +1647,13 @@ function tick() {
   // The day ring is reoriented so solar noon sits at the top (0%); its hand
   // reads solar time, not civil time, so it's the civil-day fraction (now)
   // reoriented by the same noon anchor every mark and band on this ring
-  // shares — see currentNoonAnchor.
-  var noonAnchor = haveLocation ? currentNoonAnchor(hourFraction) : null;
+  // shares — see currentNoonAnchor. cachedToday is null above the polar
+  // circle (see refreshDayEventCache) — the klima scale has saturated and
+  // there is no band, so the day ring falls back to the same "no location"
+  // state as everything downstream of a null anchor. The civil clock hands
+  // and the amber sky-time hands (below) are unaffected — they don't depend
+  // on latitude at all.
+  var noonAnchor = (haveLocation && cachedToday) ? currentNoonAnchor(hourFraction) : null;
   var dayRingFraction = noonAnchor !== null ? ((hourFraction - noonAnchor) % 1 + 1) % 1 : 0;
   handHours.setAttribute("transform", "rotate(" + (dayRingFraction * 360) + ")");
 
