@@ -1,8 +1,8 @@
-# The Three-Body Calendar
+# The Sky Calendar
 
 *A calendar in which every boundary is an observable sky event. Nothing is decreed; everything can be checked by looking up.*
 
-Every rhythm in this calendar arises from the mutual gravitation of three masses — Earth, Moon, and Sun. The day is Earth's spin; the month is the Moon's orbit; the year is Earth's orbit; the nineteen-year rhyme is the tension between the last two; and the ages are opened by Earth's own shadow falling on the Moon, its timing set by the Sun's torque on the Moon's tilted orbit. There is no fourth wheel. The system is quasi-periodic and precisely predictable, yet its frequencies share no common period, so the calendar rhymes endlessly and never repeats.
+Sky Time is the system; the **Sky Calendar** is its calendar and the **Sky Watch** its instrument. Every rhythm in it arises from the mutual gravitation of three masses — Earth, Moon, and Sun. The day is Earth's spin; the month is the Moon's orbit; the year is Earth's orbit; the nineteen-year rhyme is the tension between the last two; and the ages are opened by Earth's own shadow falling on the Moon, its timing set by the Sun's torque on the Moon's tilted orbit. There is no fourth wheel. The system is quasi-periodic and precisely predictable, yet its frequencies share no common period, so the calendar rhymes endlessly and never repeats.
 
 ---
 
@@ -27,8 +27,6 @@ Every rhythm in this calendar arises from the mutual gravitation of three masses
 **Which body governs each tier.** Day — Earth's spin. Lunar quarter and moon — the Moon's orbit. Solar quarter and year — Earth's orbit. Cycle — Moon and Earth-orbit in tension. Age — Earth's shadow, timed by the Sun's torque on the Moon's nodes. Earth is the silent partner throughout: we stand on the body whose spin, orbit, orbital plane, and shadow define four of the seven tiers.
 
 **The federation principle.** The sun and moon tracks are sovereign and independent. Moons straddle quarter boundaries freely; the year never waits for the moon; the moon is never cut by the year. Every day therefore carries a dual address, like "Tuesday the 4th" — one coordinate from each track, related but unsubordinated.
-
-**Nothing in the machine steps.** Every quantity moves continuously, because the sky does. Any implementation that recomputes on a date rollover, resets on reload, or advances in discrete units is wrong regardless of how small the step is.
 
 ---
 
@@ -80,6 +78,6 @@ Every element is verifiable by observation: the quarter by the sun's height, the
 
 1. **Unverified lineage entries: 1247 and 2382.** Check each against the NASA canon's century page before treating them as ages. The working model's *timings* matched the canon within minutes throughout, but its *type* classification failed twice at the total/partial boundary (it wrongly promoted the magnitude-0.90 partials of 1619 and 2075). Rule for the implementation: compute dates and gaps locally; take eclipse type from the canon.
 2. **Day boundary** — civil midnight (current choice, chosen for interoperability) vs sunset. The one genuinely open design decision.
-3. **Build state.** Reference implementation: `calendar-mechanism.html` — gear train, seven-tier ledger, syzygy scanner, all astronomy computed live from Meeus series with no dependencies. Not yet built: the two-track month grid (moons as the grid, solar quarters as cell tint, dual Gregorian dates), and the Google Calendar layer.
+3. **Build state.** Reference implementation: `sky-watch-mechanism.html` — gear train, seven-tier ledger, syzygy scanner, all astronomy computed live from Meeus series with no dependencies. Not yet built: the two-track month grid (moons as the grid, solar quarters as cell tint, dual Gregorian dates), and the Google Calendar layer.
 4. **Beta plan.** Ship as a PWA first: no server, no accounts, everything computed on-device, installable to the home screen and fully offline. Google sync via browser PKCE (Google Identity Services + Calendar REST API called directly from the page, tokens never leaving the device), events cached in IndexedDB. Expect the "unverified app" consent screen while in testing; Google verification is only needed to go public with the sensitive scope. Start read-only — render existing events inside the lunar grid — before attempting event creation or two-way sync.
 5. **Scope discipline for the beta.** Ship the daily layer only: today's dual address, the month grid, phases and stations. Cycles, ages, seals, and the syzygy scanner belong behind a "deep time" page or a later version.
