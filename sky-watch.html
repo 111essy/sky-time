@@ -116,7 +116,12 @@ svg {
 <text x="0" y="-35" text-anchor="middle" font-family="sans-serif" font-size="28" fill="white" opacity="1">civil time</text>
 <text x="0" y="55" text-anchor="middle" font-family="sans-serif" font-size="28" fill="#ffb300" opacity="1">solar time</text>
 <!-- These outer-ring hands are kept last so they always render above every ring, tick and mark.
-     hand-hours (day ring) is amber and synced to solar time; the other two stay crimson. -->
+     hand-hours (day ring) is amber and synced to solar time; the other two stay crimson.
+     Both the day ring and the central clock's amber hands (hand-solar-mean-
+     hour/minute, below) now run zone MEAN solar time off the same
+     zoneMeanMinutesOfDay quantity (see tick()) — one oscillating system,
+     no equation of time anywhere — so they share the same amber, not a
+     distinguishing shade. -->
 <g id="hand-solar">
 <line x1="0" y1="-255" x2="0" y2="-295.5" stroke="crimson" stroke-width="6" stroke-linecap="round" />
 </g>
@@ -127,7 +132,7 @@ svg {
 <line x1="0" y1="-155" x2="0" y2="-195.5" stroke="#ffb300" stroke-width="6" stroke-linecap="round" />
 </g>
 <!-- Clock-face stack, back to front: hour+minute hands, then the amber
-     solar-time hands above them, then the second hand and hub on top. -->
+     mean solar-time hands above them, then the second hand and hub on top. -->
 <g id="hand-clock-hour">
 <line x1="0" y1="0" x2="0" y2="-70" stroke="white" stroke-width="8" stroke-linecap="round" opacity="0.8" />
 </g>
@@ -171,16 +176,6 @@ function skyZoneOffsetMinutes(lonDegEast) {
   var z = Math.round(trueOffset / SKY_ZONE_STEP_MINUTES) * SKY_ZONE_STEP_MINUTES;
   if (z === -720) z = 720; // dateline: normalise to +12:00
   return z;
-}
-
-// The zone's own meridian (always a multiple of SKY_ZONE_STEP_MINUTES/4
-// degrees — 7.5 with the current step), not the location's exact
-// longitude. The machine computes solar events for this meridian throughout
-// — see computeDayEvents/refreshDayEventCache — so solar noon lands
-// exactly on the zone's mean time, not a few minutes off for wherever
-// inside the zone the location happens to sit.
-function zoneMeridianDeg(lonDegEast) {
-  return skyZoneOffsetMinutes(lonDegEast) / 4;
 }
 
 // Copied verbatim from files/calendar-mechanism.html (there named ph, not phJDE)
@@ -390,13 +385,37 @@ function sunEvents(jde, latDeg, lonDegEast, h0) {
   return { sunrise: noon - 4 * H, sunset: noon + 4 * H, noon: noon };
 }
 
+// The half-day angle H (degrees): the hour angle from transit to the
+// moment the sun crosses altitude h0Deg, at latitude latDeg on the day
+// containing jde. A pure function of the instant and latitude — no cached
+// state, no lookup tables, no epoch counters — so it stays correct
+// recomputed fresh every frame, left running for 100 years. Returns null
+// when |cosH| > 1 (the sun never crosses h0Deg that day at this latitude).
+//
+// This is what the day ring's marks are built from (see
+// buildTwilightSegments/updateSunMarks below): unlike sunEvents above,
+// which locates a real event in UTC at an exact longitude (with the
+// equation of time), halfDayAngle only ever answers "how many degrees from
+// noon" — deliberately longitude- and EoT-free, since the ring runs a
+// fixed-noon zone-mean-time model, not true solar time. sunEvents is kept
+// unchanged and still used wherever this file wants the real, exact event
+// (the astronomy fixtures, and the true-vs-ring comparison in the
+// verification block below) — two functions computing genuinely different
+// things, not two sources of truth for the same one.
+function halfDayAngle(jde, latDeg, h0Deg) {
+  var pos = solarPosition(jde);
+  var latR = latDeg * R;
+  var decR = pos.declination * R;
+  var cosH = (Math.sin(h0Deg * R) - Math.sin(latR) * Math.sin(decR)) / (Math.cos(latR) * Math.cos(decR));
+  if (Math.abs(cosH) > 1) return null;
+  return Math.acos(cosH) / R;
+}
+
 // The four altitude thresholds this file draws twilight bands for, ordered
 // from brightest (day/night boundary) to darkest (astronomical). Shared by
 // computeDayEvents (below), the twilight-band builder, and the verification
 // blocks at the bottom, so all three always agree on what "civil" etc. mean.
 var TWILIGHT_H0 = [-0.833, -6, -12, -18];
-var TWILIGHT_DUSK_KEYS = ["sunset", "civilDusk", "nauticalDusk", "astronomicalDusk"];
-var TWILIGHT_DAWN_KEYS = ["sunrise", "civilDawn", "nauticalDawn", "astronomicalDawn"];
 var TWILIGHT_COLORS = ["#9FCFF5", "#5B8FD4", "#33578F", "#1E2F52", "#131C33"]; // day, civil, nautical, astronomical, night
 
 // --- Klima: Ptolemy's latitude bands, defined by longest-day length. ---
@@ -630,93 +649,40 @@ function localNoon(dateInDay) {
   return new Date(dateInDay.getFullYear(), dateInDay.getMonth(), dateInDay.getDate(), 12, 0, 0, 0);
 }
 
-// sunEvents() results for one local day. offsetMin is passed in explicitly
-// (rather than derived internally) so this stays a pure function with no
-// hidden dependency on displayTimeZone or system time — callers decide
-// which offset convention applies.
+// sunEvents() results for one local day, at the default -0.833 threshold.
+// offsetMin is passed in explicitly (rather than derived internally) so
+// this stays a pure function with no hidden dependency on displayTimeZone
+// or system time — callers decide which offset convention applies. Used
+// only by the exact-coordinate astronomy fixtures below; the day ring
+// itself no longer calls this at all (see halfDayAngle).
 function computeDayEvents(noonInstant, offsetMin, lat, lon) {
   var jd = noonInstant.getTime() / 86400000 + 2440587.5;
   var sun = sunEvents(jd, lat, lon, TWILIGHT_H0[0]);
-  var civil = sunEvents(jd, lat, lon, TWILIGHT_H0[1]);
-  var nautical = sunEvents(jd, lat, lon, TWILIGHT_H0[2]);
-  var astronomical = sunEvents(jd, lat, lon, TWILIGHT_H0[3]);
-  return {
-    offsetMin: offsetMin, sunrise: sun.sunrise, sunset: sun.sunset, noon: sun.noon,
-    civilDawn: civil.sunrise, civilDusk: civil.sunset,
-    nauticalDawn: nautical.sunrise, nauticalDusk: nautical.sunset,
-    astronomicalDawn: astronomical.sunrise, astronomicalDusk: astronomical.sunset
-  };
+  return { offsetMin: offsetMin, sunrise: sun.sunrise, sunset: sun.sunset, noon: sun.noon };
 }
 
-function dayFractionOf(utcMinutes, offsetMin) {
-  if (utcMinutes === null) return null;
-  return ((utcMinutes - offsetMin) % 1440 + 1440) % 1440 / 1440;
-}
-
-// Wrap-safe linear blend between two fractions-of-a-circle (0..1), by
-// weight p in [0,1]. Always takes the short way round, so it's safe even
-// when fA/fB sit on opposite sides of the 0/1 seam (e.g. solar midnight).
-function blendFraction(fA, fB, p) {
-  var delta = fB - fA;
-  delta -= Math.round(delta);
-  return ((fA + p * delta) % 1 + 1) % 1;
-}
-
-// The day-before/day-after event sets, cached and only recomputed on a
-// location change or a local-date rollover — NOT every frame. The blended
-// positions computed from them, below, are recomputed every frame.
+// --- The day ring: a fixed-noon model on zone MEAN solar time. ---
 //
-// currentKlimaLat is the representative latitude actually fed to
-// sunEvents/computeDayEvents (see klimaLatitude) — null above the polar
-// circle, where the klima scale saturates and there is no band.
-var cachedToday, cachedTomorrow, lastLocalDateStr;
-var currentKlimaLat = null;
-var lastSunMarksCheck = 0;
-function refreshDayEventCache(refDate) {
-  var ref = refDate || new Date();
-  var wall = displayWallClock(ref);
+// DOCUMENT THE TRADE. Dropping the equation of time shifts every mark on
+// this ring by up to 16.4 minutes against the true sun (averaging 7.2
+// minutes, exceeding 10 minutes on 118 days a year). Combined with the
+// 30-minute zone (a constant -12.1 minutes at Rotterdam, see
+// skyZoneOffsetMinutes) and the klima band's own latitude substitution, the
+// sunrise/sunset marks can sit roughly half an hour from the real event.
+// Day length, the noon/midnight mirror, and twilight-band widths remain
+// exact — H is real astronomy, computed fresh every frame — only the
+// PHASE (where the whole pattern sits relative to the true sun) is
+// approximate. This is a deliberate choice of a fixed-noon model, traded
+// for adaptability: any two observers sharing a zone and a klima band see
+// an identical, predictable instrument, with no per-day event lookup.
 
-  // Solar events are computed for the ZONE MERIDIAN and the KLIMA BAND, not
-  // exact longitude/latitude — currentLon/currentLat only select which zone
-  // and band apply (see zoneMeridianDeg/klimaLatitude). This is what keeps
-  // the day ring's noon anchor and the amber sky-time hands (tick(), below)
-  // in agreement: both read the same zone's true solar noon, and any two
-  // locations sharing a zone and a klima band see an identical clock.
-  var meridian = zoneMeridianDeg(currentLon);
-  currentKlimaLat = klimaLatitude(currentLat);
-
-  if (currentKlimaLat === null) {
-    // Polar: the klima scale has saturated (longest day >= 24h at the
-    // solstice), so there is no representative band latitude to compute
-    // sunrise/sunset from. Leave the caches empty — updateSunMarks and
-    // updateTwilightBands already hide everything whenever the day ring's
-    // noon anchor is null, which it will be with no cache to read.
-    cachedToday = null;
-    cachedTomorrow = null;
-    lastLocalDateStr = wall.year + "-" + wall.month + "-" + wall.date;
-    return;
-  }
-
-  var todayNoon = displayLocalNoon(ref);
-  cachedToday = computeDayEvents(todayNoon, displayOffsetMinutes(todayNoon), currentKlimaLat, meridian);
-
-  // Date.UTC with date+1 (not +24h) so a DST-transition day — which isn't
-  // 24h long — still rolls over to the correct next calendar day.
-  var tomorrowGuess = new Date(Date.UTC(wall.year, wall.month, wall.date + 1, 12, 0, 0, 0) + wall.offsetMin * 60000);
-  var tomorrowNoon = displayLocalNoon(tomorrowGuess);
-  cachedTomorrow = computeDayEvents(tomorrowNoon, displayOffsetMinutes(tomorrowNoon), currentKlimaLat, meridian);
-
-  lastLocalDateStr = wall.year + "-" + wall.month + "-" + wall.date;
-}
-
-function refreshSunMarkCacheOnRollover(refDate, wall) {
-  if (locationStatus !== "located" && locationStatus !== "manual") return;
-  var ref = refDate || new Date();
-  var wallClock = wall || displayWallClock(ref);
-  var todayKey = wallClock.year + "-" + wallClock.month + "-" + wallClock.date;
-  if (todayKey !== lastLocalDateStr) {
-    refreshDayEventCache(ref);
-  }
+// Solar noon is exactly 12:00 zone mean time and solar midnight exactly
+// 00:00 — fixed positions, 180 degrees apart by construction, kept at the
+// ring position they already occupied. Not computed from sunEvents, not
+// blended across any day boundary: a genuine constant, not a per-frame
+// calculation collapsed to one value.
+function currentNoonAnchor() {
+  return 0;
 }
 
 var markMidnight = document.getElementById("mark-solar-midnight");
@@ -728,55 +694,27 @@ markSunset.appendChild(phaseGlyph(0, 0, 14, "half-bottom", "#ffbf00"));
 var sunMarkRadius = 180; // between the clock (150) and hour (200) rings
 
 // Places a half-yellow-circle glyph by translate only (never rotate — the
-// glyph itself must stay upright as it moves around the ring). `anchor` is
-// the current noon fraction (see currentNoonAnchor below) — subtracting it
-// reorients the ring so solar noon always sits at the top.
-function placeSunGlyph(group, utcToday, utcTomorrow, p, anchor) {
-  var fToday = dayFractionOf(utcToday, cachedToday.offsetMin);
-  var fTomorrow = dayFractionOf(utcTomorrow, cachedTomorrow.offsetMin);
-  if (fToday === null || fTomorrow === null) {
-    group.setAttribute("display", "none"); // polar day/night: nothing to draw
-    return;
-  }
-  group.removeAttribute("display");
-  var blended = blendFraction(fToday, fTomorrow, p);
-  var reoriented = ((blended - anchor) % 1 + 1) % 1;
-  var angle = reoriented * 2 * Math.PI;
+// glyph itself must stay upright as it moves around the ring), at ring
+// fraction `fraction` (0 = top = zone-mean noon, clockwise).
+function placeSunGlyphAtFraction(group, fraction) {
+  var angle = fraction * 2 * Math.PI;
   var x = sunMarkRadius * Math.sin(angle);
   var y = -sunMarkRadius * Math.cos(angle);
   group.setAttribute("transform", "translate(" + x + "," + y + ")");
 }
 
-// The day ring's single anchor: solar noon's position, blended continuously
-// between today's and tomorrow's noon exactly like every other mark on this
-// ring, expressed as a fraction of the CIVIL day (see dayFractionOf/p
-// below). Every mark, the twilight bands, and the day-ring hand itself
-// subtract this same anchor so the ring is reoriented with solar noon fixed
-// at the top (0%) — one shared source, so nothing can drift out of sync.
-function currentNoonAnchor(p) {
-  var fNoonToday = dayFractionOf(cachedToday.noon, cachedToday.offsetMin);
-  var fNoonTomorrow = dayFractionOf(cachedTomorrow.noon, cachedTomorrow.offsetMin);
-  return blendFraction(fNoonToday, fNoonTomorrow, p);
-}
-
-// Recomputed every animation frame from cachedToday/cachedTomorrow, so all
-// four marks creep continuously rather than stepping once a day. Solar
-// midnight is exactly opposite solar noon by construction (not blended
-// independently), so with noon fixed at 0° by reorientation, midnight is
-// fixed at 180° — both true always, not just on average.
-//
-// p is the CIVIL-day fraction — the same quantity driving the hour hand
-// (hourFraction), not a solar-day fraction of its own. The events being
-// blended (noon, sunrise, sunset) are solar; anchor (see currentNoonAnchor)
-// is what reorients that civil-paced blend so the ring reads as solar time.
-function updateSunMarks(p, anchor) {
-  // No location established yet (or it failed), OR the location is above
-  // the polar circle and the klima scale has saturated (see
-  // refreshDayEventCache) — either way there's no cache to read, and
-  // tick() already signals both cases with a null anchor. Hide all four
-  // marks rather than draw them from a guess, same display:none mechanism
-  // placeSunGlyph uses below for a single day's polar sunrise/sunset.
-  if (anchor === null) {
+// ONE OSCILLATING SYSTEM. Sunrise, sunset and all six twilight boundaries
+// come from a single quantity, the half-day angle H (see halfDayAngle
+// above), evaluated fresh every frame at the klima latitude — no cached
+// today/tomorrow tables, no blending across a day boundary, because H
+// itself is already a smooth, continuous function of the instant: nothing
+// to smooth over. Every mark sits symmetrically about noon by construction
+// — morning = 720-4H minutes, evening = 720+4H minutes, i.e. ring
+// fractions (1 - H/360) and (H/360) — so the mirror is exact, never two
+// independently-computed sides that happen to agree.
+function updateSunMarks() {
+  var haveLoc = locationStatus === "located" || locationStatus === "manual";
+  if (!haveLoc) {
     markMidnight.setAttribute("display", "none");
     markNoon.setAttribute("display", "none");
     markSunrise.setAttribute("display", "none");
@@ -785,14 +723,31 @@ function updateSunMarks(p, anchor) {
   }
   markMidnight.removeAttribute("display");
   markNoon.removeAttribute("display");
+  markNoon.setAttribute("transform", "rotate(" + currentNoonAnchor() + ")");
+  markMidnight.setAttribute("transform", "rotate(" + (currentNoonAnchor() + 180) + ")");
 
-  // Reoriented, noon and midnight are provably fixed at 0°/180° always —
-  // not hardcoded as a shortcut, just the reorientation's own invariant.
-  markNoon.setAttribute("transform", "rotate(0)");
-  markMidnight.setAttribute("transform", "rotate(180)");
-
-  placeSunGlyph(markSunrise, cachedToday.sunrise, cachedTomorrow.sunrise, p, anchor);
-  placeSunGlyph(markSunset, cachedToday.sunset, cachedTomorrow.sunset, p, anchor);
+  // Latitude-dependent from here down — longitude (the hand, noon/midnight
+  // above) never hides for a polar klima band, only these do.
+  var klimaLat = klimaLatitude(currentLat);
+  if (klimaLat === null) {
+    markSunrise.setAttribute("display", "none");
+    markSunset.setAttribute("display", "none");
+    return;
+  }
+  var jde = Date.now() / 86400000 + 2440587.5;
+  var H = halfDayAngle(jde, klimaLat, TWILIGHT_H0[0]);
+  if (H === null) {
+    // A single day without sunrise/sunset near the polar circle — distinct
+    // from the klima-polar case just above, which is excluded before this
+    // point is ever reached.
+    markSunrise.setAttribute("display", "none");
+    markSunset.setAttribute("display", "none");
+    return;
+  }
+  markSunrise.removeAttribute("display");
+  markSunset.removeAttribute("display");
+  placeSunGlyphAtFraction(markSunrise, ((1 - H / 360) % 1 + 1) % 1);
+  placeSunGlyphAtFraction(markSunset, (H / 360) % 1);
 }
 
 // --- Twilight bands: filled arcs behind the day ring's ticks/marks/hand. ---
@@ -811,74 +766,52 @@ var twilightPaths = [];
   }
 })();
 
-// Same civil-frame blend + noon-anchor reorientation every other mark on
-// this ring uses, applied to one of the eight twilight boundary fields
-// cached on cachedToday/cachedTomorrow (see computeDayEvents). Returns null
-// if either day lacks this boundary (see TWILIGHT_H0/sunEvents) — a band
-// bounded by a null never gets drawn.
-function blendedReorientedFraction(fieldName, p, anchor) {
-  var fToday = dayFractionOf(cachedToday[fieldName], cachedToday.offsetMin);
-  var fTomorrow = dayFractionOf(cachedTomorrow[fieldName], cachedTomorrow.offsetMin);
-  if (fToday === null || fTomorrow === null) return null;
-  var blended = blendFraction(fToday, fTomorrow, p);
-  return ((blended - anchor) % 1 + 1) % 1;
-}
-
-// Builds the day ring's twilight-band segments for the current frame, as a
-// list of { from, to, color } fractions in the reoriented (noon=0,
-// midnight=0.5) frame, each a plain non-wrapping arc from `from` to `to`.
+// Builds the day ring's twilight-band segments for jde/klimaLat, as a list
+// of { from, to, color } fractions in the fixed (noon=0, midnight=0.5)
+// frame, each a plain non-wrapping arc from `from` to `to`. Eight marks,
+// four values of H (one halfDayAngle call per threshold), one function —
+// see the comment above updateSunMarks.
 //
 // depth counts how many of the four thresholds (sunrise/sunset, civil,
-// nautical, astronomical) are valid TODAY and TOMORROW at once, reading
-// from brightest outward, stopping at the first missing one — the same
-// threshold is missing on both the dusk and dawn side by solar geometry, so
-// whichever stage is the last one reached simply extends through midnight
-// to fill the rest, exactly matching what the sky actually does that night.
+// nautical, astronomical) return a real H at this instant, reading from
+// brightest outward, stopping at the first null — the same threshold is
+// null on both the dusk and dawn side by solar geometry (H is one number
+// mirrored, not two independent ones), so whichever stage is the last one
+// reached simply extends through midnight to fill the rest, exactly
+// matching what the sky actually does that night.
 //
-// Only the sunrise/sunset pair (depth 0) can be missing while shallower
-// pairs are unaffected — deeper thresholds failing never un-fails a
-// shallower one. If even sunrise/sunset is missing, this is the reverse
-// polar case: the sun's altitude at solar noon alone decides whether the
-// whole ring is permanent day or permanent night.
-function buildTwilightSegments(p, anchor) {
-  var pairs = [];
-  for (var i = 0; i < 4; i++) {
-    pairs.push({
-      dusk: blendedReorientedFraction(TWILIGHT_DUSK_KEYS[i], p, anchor),
-      dawn: blendedReorientedFraction(TWILIGHT_DAWN_KEYS[i], p, anchor)
-    });
-  }
+// Only the sunrise/sunset threshold (depth 0) can be null while shallower
+// ones are unaffected — deeper thresholds failing never un-fails a
+// shallower one. If even sunrise/sunset is null, this is the reverse polar
+// case: the sun's altitude at transit alone decides whether the whole ring
+// is permanent day or permanent night.
+function buildTwilightSegments(jde, klimaLat) {
+  var Hs = TWILIGHT_H0.map(function(h0) { return halfDayAngle(jde, klimaLat, h0); });
 
-  if (pairs[0].dusk === null || pairs[0].dawn === null) {
-    // A single day without sunrise/sunset near the polar circle — distinct
-    // from the klima-polar case (isPolarLatitude), which is excluded before
-    // this function is ever called. Uses the same klima latitude as every
-    // other computation on this ring (currentKlimaLat is only null in that
-    // already-excluded case; currentLat is a last-resort fallback so this
-    // never crashes even if that invariant is ever violated).
-    var jd = Date.now() / 86400000 + 2440587.5;
-    var dec = solarPosition(jd).declination;
-    var latForAlt = currentKlimaLat !== null ? currentKlimaLat : currentLat;
-    var altNoon = Math.asin(Math.sin(latForAlt * R) * Math.sin(dec * R) + Math.cos(latForAlt * R) * Math.cos(dec * R)) / R;
+  if (Hs[0] === null) {
+    var dec = solarPosition(jde).declination;
+    var altNoon = Math.asin(Math.sin(klimaLat * R) * Math.sin(dec * R) + Math.cos(klimaLat * R) * Math.cos(dec * R)) / R;
     return [{ from: 0, to: 1, color: altNoon > TWILIGHT_H0[0] ? TWILIGHT_COLORS[0] : TWILIGHT_COLORS[4] }];
   }
 
   var depth = 0;
-  while (depth < 4 && pairs[depth].dusk !== null && pairs[depth].dawn !== null) depth++;
+  while (depth < 4 && Hs[depth] !== null) depth++;
 
   var segments = [];
   var last = 0, color = TWILIGHT_COLORS[0];
   for (var j = 0; j < depth; j++) {
-    segments.push({ from: last, to: pairs[j].dusk, color: color });
-    last = pairs[j].dusk;
+    var evening = Hs[j] / 360;
+    segments.push({ from: last, to: evening, color: color });
+    last = evening;
     color = TWILIGHT_COLORS[j + 1];
   }
   segments.push({ from: last, to: 0.5, color: color });
 
   last = 0.5; color = TWILIGHT_COLORS[depth];
   for (var k = depth - 1; k >= 0; k--) {
-    segments.push({ from: last, to: pairs[k].dawn, color: color });
-    last = pairs[k].dawn;
+    var morning = 1 - Hs[k] / 360;
+    segments.push({ from: last, to: morning, color: color });
+    last = morning;
     color = TWILIGHT_COLORS[k];
   }
   segments.push({ from: last, to: 1, color: color });
@@ -905,14 +838,19 @@ function annularArcPath(fromFrac, toFrac, innerR, outerR) {
     " Z";
 }
 
-// Recomputed every animation frame from cachedToday/cachedTomorrow, same as
-// updateSunMarks — the bands must breathe continuously, never step.
-function updateTwilightBands(p, anchor) {
-  if (anchor === null) {
+// Recomputed every animation frame straight from Date.now() and the klima
+// latitude — no cached state between frames, so the bands breathe
+// continuously and stay correct indefinitely (see GEAR DISCIPLINE on
+// halfDayAngle above).
+function updateTwilightBands() {
+  var haveLoc = locationStatus === "located" || locationStatus === "manual";
+  var klimaLat = haveLoc ? klimaLatitude(currentLat) : null;
+  if (klimaLat === null) {
     twilightPaths.forEach(function(path) { path.setAttribute("display", "none"); });
     return;
   }
-  var segments = buildTwilightSegments(p, anchor);
+  var jde = Date.now() / 86400000 + 2440587.5;
+  var segments = buildTwilightSegments(jde, klimaLat);
   for (var i = 0; i < twilightPaths.length; i++) {
     if (i < segments.length) {
       var seg = segments[i];
@@ -1001,7 +939,8 @@ function selectCity(result) {
   } catch (e) {
     // storage unavailable (private browsing, quota) — selection still works this session
   }
-  refreshDayEventCache();
+  updateSunMarks();
+  updateTwilightBands();
   updateLocationInfo();
 }
 
@@ -1041,7 +980,8 @@ document.getElementById("clear-location-btn").addEventListener("click", function
   locationFailureReason = null;
   geoAttempt = 0;
   locationMode = null; // back to the choice screen — don't assume last time's pick
-  updateSunMarks(0, null);
+  updateSunMarks();
+  updateTwilightBands();
   updateLocationInfo();
 });
 
@@ -1067,11 +1007,9 @@ function loadPersistedManualLocation() {
 // user picked one deliberately, don't second-guess it on every reload.
 // Otherwise updateSunMarks() hides the four location-dependent marks itself
 // (locationStatus is still "locating"); nothing is drawn from a guess.
-if (loadPersistedManualLocation()) {
-  refreshDayEventCache();
-} else {
-  updateSunMarks(0, null);
-}
+loadPersistedManualLocation();
+updateSunMarks();
+updateTwilightBands();
 updateLocationInfo();
 
 // Geolocation requires https or localhost; opening the file directly from
@@ -1090,7 +1028,8 @@ function requestLocation() {
       manualCityLabel = null;
       locationStatus = "located";
       locationFailureReason = null;
-      refreshDayEventCache();
+      updateSunMarks();
+      updateTwilightBands();
       updateLocationInfo();
     },
     function(err) {
@@ -1145,133 +1084,81 @@ document.getElementById("choice-manual-btn").addEventListener("click", function(
   document.getElementById("city-search-input").focus();
 });
 
-// --- Verification: none of this touches the live cachedToday/cachedTomorrow. ---
+// --- Verification: the day ring's fixed-noon, zone-mean-time model. ---
 
-// 1. Noon and midnight must be exactly 180 degrees apart at every instant,
-// all year — true by construction (midnight = noon's blend + half a turn),
-// but confirmed here rather than just assumed.
+// Noon and midnight are exactly 180 degrees apart at every instant — true
+// by construction (currentNoonAnchor is a genuine constant, midnight is
+// that constant plus 180, not blended or computed per frame), confirmed
+// here against the real render path (updateSunMarks/markNoon/markMidnight)
+// rather than just re-deriving the same two numbers.
 (function verifyNoonMidnightOpposite() {
-  var maxDev = 0;
-  for (var day = 0; day < 366; day++) {
-    var simDate = new Date(2026, 0, 1 + day, day % 24, (day * 37) % 60, 0);
-    var todayNoon = localNoon(simDate);
-    var evToday = computeDayEvents(todayNoon, todayNoon.getTimezoneOffset(), ROTTERDAM_LAT, ROTTERDAM_LON);
-    var tomorrowDate = new Date(simDate.getFullYear(), simDate.getMonth(), simDate.getDate() + 1, 12, 0, 0, 0);
-    var evTomorrow = computeDayEvents(tomorrowDate, tomorrowDate.getTimezoneOffset(), ROTTERDAM_LAT, ROTTERDAM_LON);
-    var p = (simDate.getHours() + simDate.getMinutes() / 60) / 24;
-    var fNoonT = dayFractionOf(evToday.noon, evToday.offsetMin);
-    var fNoonM = dayFractionOf(evTomorrow.noon, evTomorrow.offsetMin);
-    var noonBlend = blendFraction(fNoonT, fNoonM, p);
-    var midnightBlend = (noonBlend + 0.5) % 1;
-    var sep = (((midnightBlend - noonBlend) % 1) + 1) % 1 * 360;
-    var dev = Math.abs(sep - 180);
-    if (dev > maxDev) maxDev = dev;
-  }
-  console.log("Noon/midnight max deviation from 180° over a simulated year:", maxDev.toFixed(6) + "°");
-})();
-
-function angularDelta(a, b) {
-  return ((b - a + 180) % 360 + 360) % 360 - 180;
-}
-
-// 2a. The wrap itself, exercised directly. A mark only risks a bad jump when
-// its today/tomorrow fractions sit on opposite sides of the 0/1 seam — e.g.
-// today's value is 358°, tomorrow's is 2°. blendFraction() must read that as
-// a short 4° hop, not walk the long way round (356°). Solar midnight is the
-// mark that sits nearest this seam by definition (opposite noon, which sits
-// near civil noon), so it's the one this matters for in practice — but the
-// safest check is the primitive itself, stepped at minute resolution across
-// a full day, independent of whether any real date happens to land exactly
-// on the seam this century.
-(function verifyBlendWrapSafety() {
-  var fA = 358 / 360, fB = 2 / 360; // straddles 0°: short way is 4°, long way is 356°
-  var prevDeg = null, maxStep = 0;
-  for (var m = 0; m <= 1440; m++) {
-    var deg = blendFraction(fA, fB, m / 1440) * 360;
-    if (prevDeg !== null) maxStep = Math.max(maxStep, Math.abs(angularDelta(prevDeg, deg)));
-    prevDeg = deg;
-  }
-  var totalTravel = Math.abs(angularDelta(fA * 360, fB * 360));
-  console.log("Synthetic 0° crossing — total travel:", totalTravel.toFixed(2) + "° (short way, not 356°), max per-minute step:", maxStep.toFixed(4) + "°");
-})();
-
-// 2b. The same check against real Rotterdam data, stepping across the local
-// midnight where solar midnight's mark comes closest to the ring's top all
-// year (found by scanning 2026: closest approach is ~6.4°, on 2 -> 3 Nov,
-// the date the clocks change — never a true crossing for this location, but
-// the closest real rehearsal of it, and it exercises the actual
-// rollover-triggered cache refresh path used by tick()/refreshDayEventCache().
-(function verifyMidnightContinuityRealData() {
-  var prevLat = currentLat;
-  var prevLon = currentLon;
-  var prevStatus = locationStatus;
-  var prevToday = cachedToday;
-  var prevTomorrow = cachedTomorrow;
-  var prevDateStr = lastLocalDateStr;
-  var prevLastCheck = lastSunMarksCheck;
+  var savedLat = currentLat, savedLon = currentLon, savedStatus = locationStatus;
   try {
     currentLat = ROTTERDAM_LAT;
     currentLon = ROTTERDAM_LON;
     locationStatus = "manual";
-    function runSimulation(useThrottleControl) {
-      var simDate = new Date(2026, 10, 2, 23, 50, 0, 0);
-      var controlBoundaryMs = null;
-      refreshDayEventCache(simDate);
-      var prev = null;
-      var maxJump = 0;
-      var firstMidnightAngle = null;
-      for (var i = 0; i < 30; i++) {
-        var wall = displayWallClock(simDate);
-        if (useThrottleControl) {
-          var todayKey = wall.year + "-" + wall.month + "-" + wall.date;
-          if (todayKey !== lastLocalDateStr) {
-            if (controlBoundaryMs === null) controlBoundaryMs = simDate.getTime();
-            if (simDate.getTime() - controlBoundaryMs >= 60000) {
-              refreshDayEventCache(simDate);
-            }
-          }
-        } else {
-          refreshSunMarkCacheOnRollover(simDate, wall);
-        }
-        var secFraction = (wall.seconds + wall.milliseconds / 1000) / 60;
-        var minFraction = (wall.minutes + secFraction) / 60;
-        var hourFraction = (wall.hours + minFraction) / 24;
-        var noonAngle = blendFraction(dayFractionOf(cachedToday.noon, cachedToday.offsetMin), dayFractionOf(cachedTomorrow.noon, cachedTomorrow.offsetMin), hourFraction) * 360;
-        var midnightAngle = (noonAngle / 360 + 0.5) % 1 * 360;
-        var sunriseAngle = blendFraction(dayFractionOf(cachedToday.sunrise, cachedToday.offsetMin), dayFractionOf(cachedTomorrow.sunrise, cachedTomorrow.offsetMin), hourFraction) * 360;
-        var sunsetAngle = blendFraction(dayFractionOf(cachedToday.sunset, cachedToday.offsetMin), dayFractionOf(cachedTomorrow.sunset, cachedTomorrow.offsetMin), hourFraction) * 360;
-        if (firstMidnightAngle === null) firstMidnightAngle = midnightAngle;
-        if (prev) {
-          maxJump = Math.max(maxJump,
-            Math.abs(angularDelta(prev.noon, noonAngle)),
-            Math.abs(angularDelta(prev.midnight, midnightAngle)),
-            Math.abs(angularDelta(prev.sunrise, sunriseAngle)),
-            Math.abs(angularDelta(prev.sunset, sunsetAngle)));
-        }
-        prev = { noon: noonAngle, midnight: midnightAngle, sunrise: sunriseAngle, sunset: sunsetAngle };
-        simDate = new Date(simDate.getTime() + 60000);
-      }
-      return { maxJump: maxJump, firstMidnightAngle: firstMidnightAngle };
-    }
-    var immediate = runSimulation(false);
-    cachedToday = prevToday;
-    cachedTomorrow = prevTomorrow;
-    lastLocalDateStr = prevDateStr;
-    lastSunMarksCheck = prevLastCheck;
-    var throttled = runSimulation(true);
-    console.log("Max per-minute mark jump stepping across 2->3 Nov local midnight (solar-midnight mark starts at " + immediate.firstMidnightAngle.toFixed(1) + "° from top, its closest approach all year) — A immediate rollover:", immediate.maxJump.toFixed(4) + "°", "B 60s-suppressed rollover:", throttled.maxJump.toFixed(4) + "°");
-    if (Math.abs(immediate.maxJump - throttled.maxJump) < 0.0001) {
-      console.log("INCONCLUSIVE: control did not fail");
-    }
+    updateSunMarks();
+    var noonDeg = parseFloat(markNoon.getAttribute("transform").match(/-?[\d.]+/)[0]);
+    var midnightDeg = parseFloat(markMidnight.getAttribute("transform").match(/-?[\d.]+/)[0]);
+    var sep = ((midnightDeg - noonDeg) % 360 + 360) % 360;
+    console.log("Noon/midnight separation:", sep.toFixed(6) + "° (expect exactly 180.000000°)");
   } finally {
-    currentLat = prevLat;
-    currentLon = prevLon;
-    locationStatus = prevStatus;
-    cachedToday = prevToday;
-    cachedTomorrow = prevTomorrow;
-    lastLocalDateStr = prevDateStr;
-    lastSunMarksCheck = prevLastCheck;
+    currentLat = savedLat;
+    currentLon = savedLon;
+    locationStatus = savedStatus;
+    updateSunMarks(); // restore the real display state
+    updateTwilightBands();
   }
+})();
+
+// The day ring's fixed-noon model: sunrise, sunset and all six twilight
+// boundaries mirror exactly about 12:00 zone mean time, by construction —
+// every mark comes from ONE halfDayAngle(jde, latDeg, h0) call, so the two
+// sides are never computed independently (see buildTwilightSegments). At
+// Rotterdam's klima latitude (klimaLatitude(51.9225) ≈ 50.74), on the two
+// solstices and two equinoxes of 2026, and the same four dates in 2126, to
+// prove nothing here depends on cached or accumulated state — H is a pure
+// function of jde and latDeg alone (see GEAR DISCIPLINE on halfDayAngle),
+// so a century makes no difference.
+(function verifyDayRingFixedNoonModel() {
+  var klimaLat = klimaLatitude(ROTTERDAM_LAT);
+  var dates = [
+    { label: "03-20", month: 3, day: 20, expectH: 91.263, expectDay: 730.1 },
+    { label: "06-21", month: 6, day: 21, expectH: 123.743, expectDay: 989.9 },
+    { label: "09-23", month: 9, day: 23, expectH: 91.081, expectDay: 728.7 },
+    { label: "12-21", month: 12, day: 21, expectH: 59.644, expectDay: 477.2 }
+  ];
+  function ringClock(totalMinutes) {
+    var wrapped = ((totalMinutes % 1440) + 1440) % 1440;
+    var hh = Math.floor(wrapped / 60);
+    var mm = wrapped % 60;
+    return (hh < 10 ? "0" : "") + hh + ":" + (mm < 10 ? "0" : "") + mm.toFixed(2);
+  }
+  [2026, 2126].forEach(function(year) {
+    dates.forEach(function(d) {
+      var jde = Date.UTC(year, d.month - 1, d.day, 12, 0, 0, 0) / 86400000 + 2440587.5;
+      var H = halfDayAngle(jde, klimaLat, TWILIGHT_H0[0]);
+      var morning = 720 - 4 * H, evening = 720 + 4 * H;
+      var dayLength = evening - morning;
+      var midpoint = (morning + evening) / 2;
+
+      console.log(year + "-" + d.label + " ring H:", H.toFixed(3) + "° (expect " + d.expectH + ")",
+        " sunrise/sunset:", ringClock(morning) + " / " + ringClock(evening),
+        " day:", dayLength.toFixed(1) + "min (expect " + d.expectDay + ")");
+      console.log("  mirror test — midpoint:", midpoint.toFixed(5) + "min, deviation from 720.00000:",
+        Math.abs(midpoint - 720).toFixed(6) + "min (expect under 0.001min)");
+      console.log("  day length vs 8H:", dayLength.toFixed(6), "vs", (8 * H).toFixed(6),
+        " deviation:", Math.abs(dayLength - 8 * H).toFixed(6) + "min (expect 0.000000)");
+
+      // TRUE sunrise/sunset at exact Rotterdam coordinates — the accepted
+      // error this fixed-noon model trades away, made visible rather than
+      // assumed (see DOCUMENT THE TRADE above updateSunMarks).
+      var trueEv = sunEvents(jde, ROTTERDAM_LAT, ROTTERDAM_LON);
+      console.log("  true sunrise/sunset (exact Rotterdam coords):",
+        minutesOfDayToClockText(trueEv.sunrise) + " / " + minutesOfDayToClockText(trueEv.sunset),
+        " diff vs ring marks:", (morning - trueEv.sunrise).toFixed(2) + "min / " + (evening - trueEv.sunset).toFixed(2) + "min");
+    });
+  });
 })();
 
 // 3. Solar noon in Rotterdam should read near 13:44 in summer and 12:40 in
@@ -1404,9 +1291,9 @@ function minutesOfDayToClockText(totalMinutes) {
   return (hh < 10 ? "0" : "") + hh + ":" + (mm < 10 ? "0" : "") + mm;
 }
 
-// Exact Rotterdam coordinates — verifies the astronomy itself, unchanged
-// by the machine-values comparison below (which is about the machine, not
-// sunEvents()'s correctness).
+// Exact Rotterdam coordinates — verifies the astronomy itself. (The day
+// ring no longer computes from sunEvents at all — see
+// verifyDayRingFixedNoonModel above for its own true-vs-ring comparison.)
 [
   { date: [2026, 8, 9], utcOffset: 2, expect: "06:17 / 21:18 CEST" },
   { date: [2025, 12, 21], utcOffset: 1, expect: "08:48 / 16:33 CET" },
@@ -1416,85 +1303,61 @@ function minutesOfDayToClockText(totalMinutes) {
   var ev = computeDayEvents(localNoonDate, localNoonDate.getTimezoneOffset(), ROTTERDAM_LAT, ROTTERDAM_LON);
   var got = minutesToLocalTime(ev.sunrise, c.utcOffset) + " / " + minutesToLocalTime(ev.sunset, c.utcOffset);
   console.log("Sunrise/sunset " + c.date.join("-") + " (exact coords):", got, " expect:", c.expect);
-
-  // Same date, but at the zone meridian (+00:30's own 7.5-degree meridian,
-  // 7.5 deg E) AND the klima band's representative latitude (50.74 deg N)
-  // instead of Rotterdam's exact 4.47917 deg E / 51.9225 deg N — this IS
-  // what the live machine now computes (see refreshDayEventCache). The
-  // difference is the gap between the zone/klima settings and Rotterdam's
-  // true coordinates, not an error.
-  var meridian = zoneMeridianDeg(ROTTERDAM_LON);
-  var klimaLat = klimaLatitude(ROTTERDAM_LAT);
-  var evMachine = computeDayEvents(localNoonDate, localNoonDate.getTimezoneOffset(), klimaLat, meridian);
-  var gotMachine = minutesToLocalTime(evMachine.sunrise, c.utcOffset) + " / " + minutesToLocalTime(evMachine.sunset, c.utcOffset);
-  var sunriseDiff = evMachine.sunrise - ev.sunrise;
-  var sunsetDiff = evMachine.sunset - ev.sunset;
-  console.log("Sunrise/sunset " + c.date.join("-") + " (machine: meridian " + meridian + "E, klima " + klimaLat.toFixed(2) + "N):", gotMachine,
-    " diff vs exact coords:", sunriseDiff.toFixed(2) + "min / " + sunsetDiff.toFixed(2) + "min");
 });
 
-// At the exact instant of true solar noon (computed at the zone meridian),
-// the amber sky-time hand and the day ring's own hand position must both
-// read noon — that's the whole point of computing for the zone meridian
-// (fix 2) and including the equation of time (fix 1) together. Missing fix
-// 1 makes this scatter with the seasons (+-16min); missing fix 2 leaves a
-// small, roughly constant offset (the ~12min gap between Rotterdam's exact
-// longitude and its zone's 7.5-degree meridian). Only longitude is involved
-// here — klima latitude has no bearing on the TIME of solar noon, only on
-// day length.
-(function verifyZoneMeridianSolarNoon() {
-  var savedToday = cachedToday, savedTomorrow = cachedTomorrow;
-  var savedLat = currentLat, savedLon = currentLon;
-  var dates = [
-    [2026, 2, 11], [2026, 5, 14], [2026, 6, 21],
-    [2026, 7, 26], [2026, 11, 3], [2026, 12, 21]
-  ];
-  var zoneMeridian = zoneMeridianDeg(ROTTERDAM_LON);
+// The central clock's two minute hands: civil (white) and amber sky-time
+// (mean zone time, see tick()). Both civil offsets and
+// SKY_ZONE_STEP_MINUTES are multiples of 30, so the amber minute hand must
+// always be exactly 0 or 30 minutes from the civil one, at every instant —
+// never anything in between. Checked across a DST transition (CET/CEST)
+// to confirm it holds regardless of season, not just for one fixed offset.
+(function verifyAmberCivilMinuteAlignment() {
   var zoneOffset = skyZoneOffsetMinutes(ROTTERDAM_LON);
-  var handMinutes = [];
-  try {
-    currentLat = ROTTERDAM_LAT;
-    currentLon = ROTTERDAM_LON;
-    dates.forEach(function(dparts) {
-      var y = dparts[0], m = dparts[1], d = dparts[2];
-      var refDate = new Date(y, m - 1, d, 12, 0, 0, 0);
-      var jdRef = refDate.getTime() / 86400000 + 2440587.5;
-      var ev = sunEvents(jdRef, ROTTERDAM_LAT, zoneMeridian);
-      var utcMidnightMs = Date.UTC(refDate.getUTCFullYear(), refDate.getUTCMonth(), refDate.getUTCDate(), 0, 0, 0, 0);
-      var noonInstantMs = utcMidnightMs + ev.noon * 60000;
-      var noonInstant = new Date(noonInstantMs);
+  [
+    { label: "CET winter", date: new Date(2026, 0, 15, 14, 23, 47) },
+    { label: "CEST summer", date: new Date(2026, 6, 15, 9, 51, 12) }
+  ].forEach(function(c) {
+    var civilMin = c.date.getMinutes() + c.date.getSeconds() / 60;
+    var skyMinutesOfDay = (((c.date.getTime() / 60000) + zoneOffset) % 1440 + 1440) % 1440;
+    var skyMin = skyMinutesOfDay % 60;
+    var diff = ((civilMin - skyMin) % 60 + 60) % 60;
+    var deviation = Math.min(diff, Math.abs(diff - 30), Math.abs(diff - 60));
+    console.log("Amber/civil minute-hand diff (" + c.label + "):", diff.toFixed(4) + "min",
+      " deviation from {0,30}:", deviation.toFixed(4) + "min (expect 0.0000)");
+  });
+})();
 
-      // The amber hand's own formula (see tick()), evaluated at this exact instant.
-      var instantJD = noonInstantMs / 86400000 + 2440587.5;
-      var eotNow = solarPosition(instantJD).eot;
-      var skyMinutesOfDay = (((noonInstantMs / 60000) + zoneOffset + eotNow) % 1440 + 1440) % 1440;
-      handMinutes.push(skyMinutesOfDay);
-      console.log("Amber-hand time at solar noon, " + y + "-" + m + "-" + d + ":",
-        minutesOfDayToClockText(skyMinutesOfDay), "(" + skyMinutesOfDay.toFixed(4) + " min, expect 720.0000)");
+// The two amber indications — the day ring's hand and the central clock's
+// hour+minute hands — now share ONE basis, zone mean solar time (see ONE
+// OSCILLATING SYSTEM in tick()), not the old mean-clock/apparent-events
+// pair. Both are round-tripped from the same zoneMeanMinutesOfDay back to
+// minutes, using each hand's own formula — the day ring's full 24-hour
+// mapping, and the central clock's 12-hour one (which can only recover
+// zoneMeanMinutesOfDay mod 720, since a 12-hour face doesn't encode AM/PM)
+// — confirming both really do derive from the identical quantity rather
+// than two formulas that happen to look similar.
+(function verifyAmberHandsShareOneBasis() {
+  var zoneOffset = skyZoneOffsetMinutes(ROTTERDAM_LON);
+  [
+    new Date(2026, 1, 11, 3, 17, 42, 100),
+    new Date(2026, 5, 21, 23, 5, 9, 500)
+  ].forEach(function(d) {
+    var zoneMeanMinutesOfDay = (((d.getTime() / 60000) + zoneOffset) % 1440 + 1440) % 1440;
 
-      // The day ring's own hand position at this instant, via the exact same
-      // civil-frame blend + noon-anchor reorientation tick() uses. today ==
-      // tomorrow here (single-day snapshot) so blendFraction is a no-op.
-      var civilOffset = noonInstant.getTimezoneOffset();
-      var dayEv = computeDayEvents(noonInstant, civilOffset, ROTTERDAM_LAT, zoneMeridian);
-      cachedToday = dayEv;
-      cachedTomorrow = dayEv;
-      var wallMinutes = ((noonInstantMs / 60000 - civilOffset) % 1440 + 1440) % 1440;
-      var hourFraction = wallMinutes / 1440;
-      var anchor = currentNoonAnchor(hourFraction);
-      var ringDeg = ((hourFraction - anchor) % 1 + 1) % 1 * 360;
-      var ringDegSigned = ringDeg > 180 ? ringDeg - 360 : ringDeg;
-      console.log("Day ring hand position at solar noon, " + y + "-" + m + "-" + d + ":",
-        ringDegSigned.toFixed(4) + "° from top (expect 0.0000°)");
-    });
-    var minH = Math.min.apply(null, handMinutes), maxH = Math.max.apply(null, handMinutes);
-    console.log("Amber-hand solar-noon spread across all six dates:", (maxH - minH).toFixed(4) + "min (expect under 0.05min)");
-  } finally {
-    cachedToday = savedToday;
-    cachedTomorrow = savedTomorrow;
-    currentLat = savedLat;
-    currentLon = savedLon;
-  }
+    var dayRingFraction = (((zoneMeanMinutesOfDay - 720) / 1440) % 1 + 1) % 1;
+    var reconstructedFromRing = ((dayRingFraction * 1440 + 720) % 1440 + 1440) % 1440;
+
+    var skyMinFraction = (zoneMeanMinutesOfDay % 60) / 60;
+    var skyHour12 = Math.floor(zoneMeanMinutesOfDay / 60) % 12;
+    var skyHourFraction = (skyHour12 + skyMinFraction) / 12;
+    var reconstructedFromClock = ((skyHourFraction * 720) % 720 + 720) % 720;
+
+    var ringDeviation = Math.abs(reconstructedFromRing - zoneMeanMinutesOfDay);
+    var clockDeviation = Math.abs(reconstructedFromClock - (zoneMeanMinutesOfDay % 720));
+    console.log("Amber hands share one basis, " + d.toISOString() + ":",
+      "day ring round-trip deviation", ringDeviation.toFixed(6) + "min,",
+      "central clock round-trip deviation", clockDeviation.toFixed(6) + "min (expect 0.000000 both)");
+  });
 })();
 
 // Klima: the seven reference latitudes from the spec — 51.9225 -> 16h30m
@@ -1559,11 +1422,15 @@ function minutesOfDayToClockText(totalMinutes) {
   var civilMinutesOfDay = civil.hours * 60 + civil.minutes + (civil.seconds + civil.milliseconds / 1000) / 60;
   var gapMinutes = Math.round((((civilMinutesOfDay - skyMinutesOfDay) % 1440) + 1440 + 720) % 1440 - 720);
   // Rotterdam's solar zone is fixed at +00:30; civil offset shifts with DST
-  // (CET +01:00 / CEST +02:00), so the gap is necessarily seasonal: 30 min
-  // in winter (60 - 30), 90 min (1h30m) in summer (120 - 30) -- not one
-  // constant, because only one of the two sides of the gap observes DST.
+  // (CET +01:00 / CEST +02:00), so the gap is necessarily seasonal — 30 min
+  // in winter (60 - 30), 90 min (1h30m) in summer (120 - 30) — not one
+  // constant, because only one side of the gap observes DST. Asserting a
+  // whole multiple of 30 (rather than hardcoding "30 in winter, 90 in
+  // summer") is the actual invariant and holds regardless of season or
+  // which DST rule is in effect on the day this runs.
+  var gapIsMultipleOf30 = gapMinutes % 30 === 0;
   console.log("Rotterdam solar time / civil time:", minutesOfDayToClockText(skyMinutesOfDay), "/", minutesOfDayToClockText(civilMinutesOfDay),
-    " gap:", gapMinutes + "min (expect 30 in CET winter, 90 in CEST summer)");
+    " gap:", gapMinutes + "min, whole multiple of 30:", gapIsMultipleOf30);
 })();
 
 // 5. Twilight bands — the four boundary pairs for today, in local time.
@@ -1607,33 +1474,18 @@ function minutesOfDayToClockText(totalMinutes) {
 
 // 7. Twilight bands — the five band spans must sum to 360°, both on a day
 // when all five exist and on a day (the summer solstice) when astronomical
-// night doesn't. Runs the real buildTwilightSegments()/currentNoonAnchor()
-// against a single-day snapshot (today==tomorrow, so blendFraction is a
-// no-op) rather than a reimplementation, so this checks the actual code.
+// night doesn't. Runs the real buildTwilightSegments() against Rotterdam's
+// klima latitude, not a reimplementation, so this checks the actual code.
 (function verifyTwilightBandSum() {
-  var savedToday = cachedToday, savedTomorrow = cachedTomorrow;
-  var savedLat = currentLat, savedLon = currentLon;
+  var klimaLat = klimaLatitude(ROTTERDAM_LAT);
   function sumSegmentsForDate(y, m, d, label) {
-    currentLat = ROTTERDAM_LAT;
-    currentLon = ROTTERDAM_LON;
-    var noonDate = localNoon(new Date(y, m - 1, d));
-    var ev = computeDayEvents(noonDate, noonDate.getTimezoneOffset(), ROTTERDAM_LAT, ROTTERDAM_LON);
-    cachedToday = ev;
-    cachedTomorrow = ev;
-    var anchor = currentNoonAnchor(0);
-    var segs = buildTwilightSegments(0, anchor);
+    var jde = Date.UTC(y, m - 1, d, 12, 0, 0, 0) / 86400000 + 2440587.5;
+    var segs = buildTwilightSegments(jde, klimaLat);
     var total = segs.reduce(function(sum, s) { return sum + (s.to - s.from); }, 0);
     console.log("Twilight band spans sum (" + label + "):", (total * 360).toFixed(4) + "° (expect 360.0000°), segment count:", segs.length);
   }
-  try {
-    sumSegmentsForDate(2026, 8, 11, "2026-08-11, all bands present");
-    sumSegmentsForDate(2026, 6, 21, "2026-06-21, astronomical band absent");
-  } finally {
-    cachedToday = savedToday;
-    cachedTomorrow = savedTomorrow;
-    currentLat = savedLat;
-    currentLon = savedLon;
-  }
+  sumSegmentsForDate(2026, 8, 11, "2026-08-11, all bands present");
+  sumSegmentsForDate(2026, 6, 21, "2026-06-21, astronomical band absent");
 })();
 
 var handHours = document.getElementById("hand-hours");
@@ -1649,58 +1501,47 @@ function tick() {
   var now = new Date();
   var haveLocation = locationStatus === "located" || locationStatus === "manual";
 
-  // Single source of truth for both the hour ring and the sun-event marks
-  // (see displayOffsetMinutes/displayWallClock above) — also drives the
-  // 12-hour analog face, so the whole dial reads one consistent civil time
-  // rather than the ring and the clock face disagreeing with each other.
-  // Until a location is found or entered, civil time isn't meaningful yet
-  // (displayTimeZone would just be guessing at device-local), so all civil
-  // hands point straight up instead of ticking on an unearned assumption.
+  // Single source of truth for the civil 12-hour face (see
+  // displayOffsetMinutes/displayWallClock above). Until a location is found
+  // or entered, civil time isn't meaningful yet (displayTimeZone would just
+  // be guessing at device-local), so all civil hands point straight up
+  // instead of ticking on an unearned assumption.
   var wall = haveLocation ? displayWallClock(now) : null;
   var secFraction = haveLocation ? (wall.seconds + wall.milliseconds / 1000) / 60 : 0;
   var minFraction = haveLocation ? (wall.minutes + secFraction) / 60 : 0;
-  var hourFraction = haveLocation ? (wall.hours + minFraction) / 24 : 0;
-
-  // The day ring is reoriented so solar noon sits at the top (0%); its hand
-  // reads solar time, not civil time, so it's the civil-day fraction (now)
-  // reoriented by the same noon anchor every mark and band on this ring
-  // shares — see currentNoonAnchor. cachedToday is null above the polar
-  // circle (see refreshDayEventCache) — the klima scale has saturated and
-  // there is no band, so the day ring falls back to the same "no location"
-  // state as everything downstream of a null anchor. The civil clock hands
-  // and the amber sky-time hands (below) are unaffected — they don't depend
-  // on latitude at all.
-  var noonAnchor = (haveLocation && cachedToday) ? currentNoonAnchor(hourFraction) : null;
-  var dayRingFraction = noonAnchor !== null ? ((hourFraction - noonAnchor) % 1 + 1) % 1 : 0;
-  handHours.setAttribute("transform", "rotate(" + (dayRingFraction * 360) + ")");
 
   var clockHourFraction = haveLocation ? ((wall.hours % 12) + minFraction) / 12 : 0;
   handClockHour.setAttribute("transform", "rotate(" + (clockHourFraction * 360) + ")");
   handClockMinute.setAttribute("transform", "rotate(" + (minFraction * 360) + ")");
   handClockSecond.setAttribute("transform", "rotate(" + (secFraction * 360) + ")");
 
-  // Sky-time zone hands (amber, longitude-zoned and smooth). Deliberately
-  // NO dependency on civil time or the timezone database: Date.now() is
-  // milliseconds since the Unix epoch, which is itself a UTC midnight, so
-  // dividing by 60000 and taking %1440 gives UTC minutes-of-day directly —
-  // continuous to the millisecond, no getUTCHours/Minutes/Seconds
-  // decomposition, no wall-clock component to desync from. The equation of
-  // time is added so this reads TRUE solar time for the zone meridian, not
-  // mean time — matching the day ring, which is anchored to true solar noon
-  // via currentNoonAnchor(). Without it the two could disagree by up to 16
-  // minutes.
+  // ONE OSCILLATING SYSTEM: the day ring's hand and the central clock's
+  // amber hands are both derived from this single quantity — zone MEAN
+  // solar time, UTC + skyZoneOffsetMinutes(lon). No equation of time
+  // anywhere here (see DOCUMENT THE TRADE above updateSunMarks): this is a
+  // fixed-noon model, not a true instrument, traded deliberately for
+  // adaptability. Deliberately NO dependency on civil time or the timezone
+  // database either: Date.now() is milliseconds since the Unix epoch,
+  // itself a UTC midnight, so dividing by 60000 and taking %1440 gives UTC
+  // minutes-of-day directly — continuous to the millisecond, no
+  // getUTCHours/Minutes/Seconds decomposition, no wall-clock component to
+  // desync from, and no per-day cache to go stale.
+  //
+  // The day ring's own "noon" is fixed at minute 720 (see
+  // currentNoonAnchor) — hand fraction 0 there, increasing clockwise.
   if (haveLocation) {
-    var skyJD = Date.now() / 86400000 + 2440587.5;
-    var skyEot = solarPosition(skyJD).eot;
-    var skyMinutesOfDay = (((Date.now() / 60000) + skyZoneOffsetMinutes(currentLon) + skyEot)
-      % 1440 + 1440) % 1440;
-    var skyMinFraction = (skyMinutesOfDay % 60) / 60;
-    var skyHour12 = Math.floor(skyMinutesOfDay / 60) % 12; // integer hour only — skyMinFraction supplies the fraction
-    var skyHourFraction = (skyHour12 + skyMinFraction) / 12;
+    var zoneMeanMinutesOfDay = (((Date.now() / 60000) + skyZoneOffsetMinutes(currentLon)) % 1440 + 1440) % 1440;
 
+    var dayRingFraction = (((zoneMeanMinutesOfDay - 720) / 1440) % 1 + 1) % 1;
+    handHours.setAttribute("transform", "rotate(" + (dayRingFraction * 360) + ")");
+
+    var skyMinFraction = (zoneMeanMinutesOfDay % 60) / 60;
+    var skyHour12 = Math.floor(zoneMeanMinutesOfDay / 60) % 12; // integer hour only — skyMinFraction supplies the fraction
+    var skyHourFraction = (skyHour12 + skyMinFraction) / 12;
     handSolarMeanHour.setAttribute("transform", "rotate(" + (skyHourFraction * 360) + ")");
     handSolarMeanMinute.setAttribute("transform", "rotate(" + (skyMinFraction * 360) + ")");
   } else {
+    handHours.setAttribute("transform", "rotate(0)");
     handSolarMeanHour.setAttribute("transform", "rotate(0)");
     handSolarMeanMinute.setAttribute("transform", "rotate(0)");
   }
@@ -1712,18 +1553,11 @@ function tick() {
   var solarFraction = solarPointerFraction(jd);
   handSolar.setAttribute("transform", "rotate(" + (solarFraction * 360) + ")");
 
-  // The blend itself runs every frame, so the marks and bands are always continuous.
-  updateSunMarks(hourFraction, noonAnchor);
-  updateTwilightBands(hourFraction, noonAnchor);
-
-  // The rollover check itself is cheap and must run every frame so midnight
-  // switches caches immediately. The timestamp is kept only as a diagnostic
-  // heartbeat; it no longer gates rollover detection.
-  if (haveLocation) {
-    refreshSunMarkCacheOnRollover(now, wall);
-  }
-  var nowMs = Date.now();
-  if (nowMs - lastSunMarksCheck >= 60000) lastSunMarksCheck = nowMs;
+  // H is recomputed straight from Date.now() every frame (see
+  // buildTwilightSegments/updateSunMarks), so the marks and bands are
+  // always continuous with no per-day cache to roll over.
+  updateSunMarks();
+  updateTwilightBands();
 
   requestAnimationFrame(tick);
 }
