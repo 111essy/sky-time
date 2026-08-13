@@ -32,57 +32,78 @@ Earlier versions existed — Hipparchus had a table of climata, and Aristotle's 
 
 ### What we take
 
-The clock quantises latitude into klimata rather than into equal degrees, in **20-minute steps of longest day** — chosen to rhyme with the 20-minute solar time zones on the longitude axis. That gives 36 bands per hemisphere, 72 worldwide, matching the 72 longitude zones.
+The clock quantises latitude into klimata rather than into equal degrees, in **30-minute steps of longest day** — the same step as the solar time zones on the longitude axis. That gives 24 bands per hemisphere, 48 worldwide, matching the 48 longitude zones. (This is also Ptolemy's own step in the *Geography*, where he reduced the *Almagest*'s quarter-hour parallels to half-hour intervals.)
 
 The reason for quantising the *output* rather than the input: latitude's effect on sunrise is strongly non-linear. A degree of latitude is nearly irrelevant at the equator and dominant near the polar circle. Defining bands by day length gives each band the same timekeeping error and makes them narrow automatically where they need to:
 
 | longest day | latitude | band width |
 |---|---|---|
 | 12h00m | 0.00° | — |
-| 14h00m | 29.04° | 4.38° |
-| 16h40m | 51.65° | 1.87° |
-| 19h00m | 60.34° | 0.88° |
-| 21h00m | 63.97° | 0.44° |
-| 23h20m | 65.64° | 0.10° |
+| 13h00m | 14.75° | 8.24° |
+| 15h00m | 39.86° | 4.99° |
+| 17h00m | 53.33° | 2.58° |
+| 19h00m | 60.34° | 1.36° |
+| 21h00m | 63.97° | 0.68° |
+| 23h30m | 65.68° | 0.14° |
 
-Error within a band is ±10 minutes of day length, or about ±5 minutes on sunrise.
+Error within a band is ±15 minutes of day length, or about ±7.5 minutes on sunrise.
 
 Reference values used in the implementation (h₀ = −0.833°, δ = 23.44°):
 
 | location | longest day | klima | representative latitude |
 |---|---|---|---|
-| Rotterdam 51.9225 | 16.72 h | 16h40m | +51.65 |
+| Rotterdam 51.9225 | 16.72 h | 16h30m | +50.74 |
 | Equator 0.0 | 12.12 h | 12h00m | +0.00 |
-| Nairobi −1.2921 | 12.20 h | 12h20m | −3.66 |
-| Sydney −33.8688 | 14.41 h | 14h20m | −33.02 |
+| Nairobi −1.2921 | 12.20 h | 12h00m | −0.00 |
+| Sydney −33.8688 | 14.41 h | 14h30m | −34.87 |
+| New York 40.7128 | 15.09 h | 15h00m | +39.86 |
 | Reykjavík 64.1466 | 21.15 h | 21h00m | +63.97 |
 | Tromsø 69.6492 | 24 h | **polar — no band** | — |
 
 ### Where we depart
 
-- **Finer steps.** Ptolemy used quarter-hours in the *Almagest* and half-hours in the *Geography*; we use 20 minutes, for symmetry with the longitude zones rather than for any historical reason.
+- **Same step, different reason.** Ptolemy used quarter-hours in the *Almagest* and half-hours in the *Geography*. We use half-hours too, but for symmetry with the 30-minute longitude zones rather than by inheritance — the agreement is a coincidence worth noting, not a derivation.
 - **Both hemispheres.** Ptolemy's system covered the *oikoumene*, the known inhabited world, and was northern. We mirror it south by taking the sign of the latitude.
 - **Refraction included.** Ptolemy never accounted for atmospheric refraction. We use h₀ = −0.833°, which includes both refraction (~0.57°) and the sun's semidiameter (~0.27°), so our band boundaries sit at slightly different latitudes than his would.
 - **Polar saturation is explicit.** Above the polar circle the day-length scale runs out — the longest day saturates at 24 hours and the bands become infinitely narrow. Ptolemy's system simply ended at the limit of the inhabited world; we treat it as a distinct state that hides the location-dependent marks rather than clamping silently.
 
 ---
 
-## Solar time zones — 20-minute longitude bands ✅
+## Solar time zones — 30-minute longitude bands ✅
 
-**Precedent.** Nautical time zones, in use for over a century, are exactly 15° wide and centred on multiples of 15°, with no political boundaries. Local mean time — UTC plus four minutes per degree east — was the civil standard everywhere before railways forced zone time.
+**What came before zones: local mean time.** Until the mid-19th century every town kept its own meridian and its own clock. Places one degree of longitude apart had times four minutes apart — the same 4 min/° relation this project uses. North America had over 144 local times before 1883. Local *apparent* time (a sundial) gave way to local *mean* time as accurate mechanical clocks spread, and local mean time remained the civil standard until national standard times replaced it. So solar-based civil time is not an invention of this project; it is the older practice, and the hourly grid is the innovation that displaced it.
 
-**The Dutch case is directly relevant.** The Netherlands ran Amsterdam Time at UTC+00:19:32 from 1909, rounded it to exactly **UTC+00:20** in 1937, and kept it until 1940, when the occupation imposed CET. It stayed on CET after the war. So a 20-minute grid returns Rotterdam to the offset the country had chosen for itself by the same reasoning.
+**Why it was displaced.** Railways. A train at 100 km/h crosses about a degree of longitude in 6–7 minutes; over a few hundred kilometres the accumulated difference reaches 20–30 minutes, which made single-track scheduling dangerous. Deadly collisions in the 1850s were attributed partly to clock confusion. British railways moved to GMT across all stations by 1847 ("Railway Time"); US and Canadian railroads imposed four zones on 18 November 1883, the "Day of Two Noons." The 1884 International Meridian Conference in Washington fixed Greenwich as the prime meridian and set the framework still in use. Note what this history actually shows: zone time was adopted for **coordination**, not accuracy. It made clocks agree with each other by making them disagree with the sun.
+
+**Pure-longitude zones: nautical time.** The closest precedent for a grid with no political boundaries. Recommended by the Anglo-French Conference on Time-keeping at Sea (London, June 1917) and adopted by all major fleets between 1920 and 1925, nautical time divides the globe into 24 zones of exactly 15° of longitude, centred on Greenwich, with no political deviation. Ships revert to it on leaving territorial waters. What it replaced is closer still to this project: before the 20th century ships kept local apparent time, setting clocks so that noon fell when the sun crossed the ship's own meridian.
+
+**Sub-hourly offsets are ordinary.** India runs +5:30, Iran +3:30, Nepal +5:45, Chatham +12:45. France's 1911 adoption of Greenwich was legally worded as "Paris Mean Time retarded by 9 minutes 21 seconds" — a Greenwich offset described in solar terms, because solar terms were what the law understood.
+
+**The Dutch case.** The Netherlands ran Amsterdam Time at UTC+00:19:32 from 1909, then rounded it to exactly **UTC+00:20** in 1937, keeping it until the 1940 occupation imposed CET (retained after the war). The reasoning was precisely this project's: take local mean time and round it to a convenient shared figure. Note that the Dutch chose a *finer* rounding than we do — their +00:20 was 2 minutes from true local mean time, where our 30-minute grid places Rotterdam at +00:30, 12 minutes from it. The precedent supports the method, not the step.
 
 ### What we take
 
-72 zones, each 5° of longitude wide, 20 minutes of time apart, named by their offset (`+00:20`, `−05:00`, `+09:20`). Rounding error is at most ±10 minutes — comfortably under the ±16.4 minutes of the equation of time, which the clock *does* carry, so the zone is never the dominant error.
+48 zones, each 7.5° of longitude wide, 30 minutes of time apart, named by their offset (`+00:30`, `−05:00`, `+09:30`). Zones are pure longitude, following nautical practice: no political shapes, no negotiation.
 
-Zones are pure longitude: no political shapes, no negotiation. Crossing 2.5°E puts you in the next zone.
+**Why 30 minutes.** Two constraints. The zone should stay below the equation of time (±16.4 min), which the clock carries — otherwise the zone becomes the dominant error and the case for correcting the EoT at all weakens. And the grid should be recognisable: 30 minutes contains every existing whole- and half-hour civil offset (India +5:30, Iran +3:30, Adelaide +9:30), so it reads as a familiar kind of thing rather than an invention.
+
+| step | zones | worst error | suffixes | contains civil half-hours? |
+|---|---|---|---|---|
+| 60 min | 24 | ±30.0 min | 1 | — |
+| **30 min** | **48** | **±15.0 min** | **2** | **yes** |
+| 20 min | 72 | ±10.0 min | 3 | no |
+| 15 min | 96 | ±7.5 min | 4 | yes, and quarter-hours |
+
+This is the one place in the project where familiarity was chosen over precision, and it should be recorded as such. A 20-minute grid was implemented first and gave ±10 min; 30 minutes gives ±15, still under the equation of time but with less headroom. For Rotterdam specifically the cost is concrete and permanent: true offset +17.9 min rounds to +00:30, an error of **12.1 minutes every day of the year**, against 2.1 minutes under the 20-minute grid.
+
+The same 30-minute step is used for the klimata on the latitude axis, so the location of any observer is two numbers of the same kind: 48 zones and 48 klimata.
 
 ### Where we depart
 
-- **Not aligned to civil offsets.** A 20-minute grid contains the whole-hour offsets but not the half- and quarter-hour ones (India +5:30, Nepal +5:45, Chatham +12:45). This is deliberate: sky time is a separate system and shouldn't be mistaken for a civil one.
-- **The machine computes for the zone meridian**, not for the user's exact longitude. This is what makes solar noon land at exactly 12:00 and at the exact top of the day ring for everyone in a zone — the mechanical model, where two people with the same settings see the same instrument.
+- **From nautical time: finer.** 7.5° gores rather than 15°, because a ±30-minute error would swamp everything else in the machine.
+- **Quarter-hour offsets are not captured.** Nepal (+5:45) and Chatham (+12:45) fall off the grid; a 15-minute step would have caught them at the cost of four suffixes. Sky time is a separate system and should not be mistaken for a civil one.
+- **The machine computes for the zone meridian**, not the user's exact longitude. This is what makes solar noon land at exactly 12:00 and at the exact top of the day ring for everyone in a zone — the mechanical model, where two people with the same settings see the same instrument.
+- **No date line quirks.** The 180° zone is normalised to +12:00 rather than split into two 7.5° gores as nautical time does.
 
 ---
 
@@ -149,5 +170,6 @@ Whether to add a small equation-of-time indicator showing how far the ring is ru
 - Severus Sebokht, *Description of the Astrolabe* (7th c.), trans. Gunther, *Astrolabes of the World* (1932)
 - D.R. Dicks, "The ΚΛΙΜΑΤΑ in the Greek Geography", *Classical Quarterly* 5 (1955)
 - Tupikova & Geus, "Ptolemy's data for the latitudes of Alexandria, Syene and Meroë" (2019)
+- Wikipedia, "Local mean time", "Nautical time", "Anglo-French Conference on Time-keeping at Sea", "History of time in the United States"
 - Meeus, *Astronomical Algorithms* — ch. 25 (solar position), 27 (equinoxes/solstices), 47 (lunar position), 49 (phases)
 - NASA Five Millennium Catalog of Lunar Eclipses

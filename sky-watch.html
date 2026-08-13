@@ -161,11 +161,11 @@ var cx = 0, cy = 0;
 
 var ROTTERDAM_LAT = 51.9225;
 var ROTTERDAM_LON = 4.47917;
-var SKY_ZONE_STEP_MINUTES = 20; // 5 degrees of longitude
+var SKY_ZONE_STEP_MINUTES = 30; // 7.5 degrees of longitude
 
 // Sky-time zone offset from UTC, in minutes: the nearest multiple of
-// 20 to the location's true mean solar offset (4 minutes per degree
-// east). 72 zones worldwide, +00:00 at Greenwich.
+// SKY_ZONE_STEP_MINUTES to the location's true mean solar offset (4
+// minutes per degree east). 48 zones worldwide, +00:00 at Greenwich.
 function skyZoneOffsetMinutes(lonDegEast) {
   var trueOffset = lonDegEast * 4;
   var z = Math.round(trueOffset / SKY_ZONE_STEP_MINUTES) * SKY_ZONE_STEP_MINUTES;
@@ -173,11 +173,12 @@ function skyZoneOffsetMinutes(lonDegEast) {
   return z;
 }
 
-// The zone's own meridian (always a multiple of 5 degrees), not the
-// location's exact longitude. The machine computes solar events for this
-// meridian throughout — see computeDayEvents/refreshDayEventCache — so
-// solar noon lands exactly on the zone's mean time, not a few minutes off
-// for wherever inside the zone the location happens to sit.
+// The zone's own meridian (always a multiple of SKY_ZONE_STEP_MINUTES/4
+// degrees — 7.5 with the current step), not the location's exact
+// longitude. The machine computes solar events for this meridian throughout
+// — see computeDayEvents/refreshDayEventCache — so solar noon lands
+// exactly on the zone's mean time, not a few minutes off for wherever
+// inside the zone the location happens to sit.
 function zoneMeridianDeg(lonDegEast) {
   return skyZoneOffsetMinutes(lonDegEast) / 4;
 }
@@ -403,13 +404,13 @@ var TWILIGHT_COLORS = ["#9FCFF5", "#5B8FD4", "#33578F", "#1E2F52", "#131C33"]; /
 // Equal-degree latitude bands would be wrong: a degree of latitude is
 // negligible near the equator and dominant near the poles (the same
 // nonlinearity sunEvents' cosH already deals with). Quantising the OUTPUT
-// (longest day, in 20-minute steps — the same step as the 20-minute
-// longitude zones) instead gives uniform error and bands that narrow
-// automatically where the sky actually changes fastest. 36 bands per
-// hemisphere, 72 worldwide — this is what astrolabe plates were
-// historically cut for.
+// (longest day, in KLIMA_STEP_HOURS steps — the same step as the
+// SKY_ZONE_STEP_MINUTES longitude zones) instead gives uniform error and
+// bands that narrow automatically where the sky actually changes fastest.
+// 24 bands per hemisphere, 48 worldwide — this is what astrolabe plates
+// were historically cut for.
 
-var KLIMA_STEP_HOURS = 1 / 3; // 20 minutes
+var KLIMA_STEP_HOURS = 0.5; // 30 minutes
 var KLIMA_MAX_LAT = 66.8; // just past the polar circle, where the scale saturates
 var SOLSTICE_DECLINATION = 23.44; // fixed, not solarPosition()'s slowly-drifting obliquity — klima is a latitude-only ideal, not tied to a date
 
@@ -429,7 +430,7 @@ function longestDayHours(latDeg) {
 }
 
 // The klima band a latitude falls in: its longest day, rounded to the
-// nearest 20 minutes.
+// nearest KLIMA_STEP_HOURS (30 minutes).
 function klimaHours(latDeg) {
   return Math.round(longestDayHours(latDeg) / KLIMA_STEP_HOURS) * KLIMA_STEP_HOURS;
 }
@@ -461,9 +462,9 @@ function klimaLatitude(latDeg) {
   return latDeg < 0 ? -representative : representative;
 }
 
-// "16h40m" / "12h00m" / "21h00m" — klimaHours() is always a multiple of
-// 1/3 hour by construction, so rounding to the nearest minute here is just
-// float cleanup, not a second quantisation.
+// "16h30m" / "12h00m" / "21h00m" — klimaHours() is always a multiple of
+// KLIMA_STEP_HOURS by construction, so rounding to the nearest minute here
+// is just float cleanup, not a second quantisation.
 function formatKlimaHours(hours) {
   var totalMinutes = Math.round(hours * 60);
   var hh = Math.floor(totalMinutes / 60);
@@ -924,7 +925,7 @@ function updateTwilightBands(p, anchor) {
   }
 }
 
-// "klima 16h40m (51.6 N)" or "klima POLAR" — two locations sharing a solar
+// "klima 16h30m (50.7 N)" or "klima POLAR" — two locations sharing a solar
 // zone and a klima band see an identical clock, so both settings are shown
 // together, and this is the single place that combines them for display.
 function klimaDisplayText(latDeg) {
@@ -1040,7 +1041,7 @@ document.getElementById("clear-location-btn").addEventListener("click", function
   locationFailureReason = null;
   geoAttempt = 0;
   locationMode = null; // back to the choice screen — don't assume last time's pick
-  updateSunMarks(0);
+  updateSunMarks(0, null);
   updateLocationInfo();
 });
 
@@ -1069,7 +1070,7 @@ function loadPersistedManualLocation() {
 if (loadPersistedManualLocation()) {
   refreshDayEventCache();
 } else {
-  updateSunMarks(0);
+  updateSunMarks(0, null);
 }
 updateLocationInfo();
 
@@ -1404,7 +1405,7 @@ function minutesOfDayToClockText(totalMinutes) {
 }
 
 // Exact Rotterdam coordinates — verifies the astronomy itself, unchanged
-// by the zone-meridian change below (which is about the machine, not
+// by the machine-values comparison below (which is about the machine, not
 // sunEvents()'s correctness).
 [
   { date: [2026, 8, 9], utcOffset: 2, expect: "06:17 / 21:18 CEST" },
@@ -1416,16 +1417,19 @@ function minutesOfDayToClockText(totalMinutes) {
   var got = minutesToLocalTime(ev.sunrise, c.utcOffset) + " / " + minutesToLocalTime(ev.sunset, c.utcOffset);
   console.log("Sunrise/sunset " + c.date.join("-") + " (exact coords):", got, " expect:", c.expect);
 
-  // Same date, but at the zone meridian (+00:20's own 5-degree meridian,
-  // 5.0 deg E) instead of Rotterdam's exact 4.47917 deg E — this IS what
-  // the live machine now computes (see refreshDayEventCache). The
-  // difference is the few minutes between the zone meridian and Rotterdam's
-  // true longitude, not an error.
-  var evZone = computeDayEvents(localNoonDate, localNoonDate.getTimezoneOffset(), ROTTERDAM_LAT, zoneMeridianDeg(ROTTERDAM_LON));
-  var gotZone = minutesToLocalTime(evZone.sunrise, c.utcOffset) + " / " + minutesToLocalTime(evZone.sunset, c.utcOffset);
-  var sunriseDiff = evZone.sunrise - ev.sunrise;
-  var sunsetDiff = evZone.sunset - ev.sunset;
-  console.log("Sunrise/sunset " + c.date.join("-") + " (zone meridian):", gotZone,
+  // Same date, but at the zone meridian (+00:30's own 7.5-degree meridian,
+  // 7.5 deg E) AND the klima band's representative latitude (50.74 deg N)
+  // instead of Rotterdam's exact 4.47917 deg E / 51.9225 deg N — this IS
+  // what the live machine now computes (see refreshDayEventCache). The
+  // difference is the gap between the zone/klima settings and Rotterdam's
+  // true coordinates, not an error.
+  var meridian = zoneMeridianDeg(ROTTERDAM_LON);
+  var klimaLat = klimaLatitude(ROTTERDAM_LAT);
+  var evMachine = computeDayEvents(localNoonDate, localNoonDate.getTimezoneOffset(), klimaLat, meridian);
+  var gotMachine = minutesToLocalTime(evMachine.sunrise, c.utcOffset) + " / " + minutesToLocalTime(evMachine.sunset, c.utcOffset);
+  var sunriseDiff = evMachine.sunrise - ev.sunrise;
+  var sunsetDiff = evMachine.sunset - ev.sunset;
+  console.log("Sunrise/sunset " + c.date.join("-") + " (machine: meridian " + meridian + "E, klima " + klimaLat.toFixed(2) + "N):", gotMachine,
     " diff vs exact coords:", sunriseDiff.toFixed(2) + "min / " + sunsetDiff.toFixed(2) + "min");
 });
 
@@ -1434,8 +1438,10 @@ function minutesOfDayToClockText(totalMinutes) {
 // read noon — that's the whole point of computing for the zone meridian
 // (fix 2) and including the equation of time (fix 1) together. Missing fix
 // 1 makes this scatter with the seasons (+-16min); missing fix 2 leaves a
-// small, roughly constant offset (the ~2min gap between Rotterdam's exact
-// longitude and its zone's 5-degree meridian).
+// small, roughly constant offset (the ~12min gap between Rotterdam's exact
+// longitude and its zone's 7.5-degree meridian). Only longitude is involved
+// here — klima latitude has no bearing on the TIME of solar noon, only on
+// day length.
 (function verifyZoneMeridianSolarNoon() {
   var savedToday = cachedToday, savedTomorrow = cachedTomorrow;
   var savedLat = currentLat, savedLon = currentLon;
@@ -1491,10 +1497,11 @@ function minutesOfDayToClockText(totalMinutes) {
   }
 })();
 
-// Klima: the six reference latitudes from the spec — 51.9225 -> 16h40m
-// (+51.65), 0.0 -> 12h00m (+0.00), -1.2921 -> 12h20m (-3.66), -33.8688 ->
-// 14h20m (-33.02), 64.1466 -> 21h00m (+63.97), 69.6492 -> POLAR.
-[51.9225, 0.0, -1.2921, -33.8688, 64.1466, 69.6492].forEach(function(lat) {
+// Klima: the seven reference latitudes from the spec — 51.9225 -> 16h30m
+// (+50.74), 0.0 -> 12h00m (+0.00), -1.2921 -> 12h00m (-0.00), -33.8688 ->
+// 14h30m (-34.87), 64.1466 -> 21h00m (+63.97), 40.7128 -> 15h00m (+39.86),
+// 69.6492 -> POLAR.
+[51.9225, 0.0, -1.2921, -33.8688, 64.1466, 40.7128, 69.6492].forEach(function(lat) {
   if (isPolarLatitude(lat)) {
     console.log("Klima lat " + lat + " -> POLAR, no band");
     return;
@@ -1506,8 +1513,13 @@ function minutesOfDayToClockText(totalMinutes) {
 });
 
 // Today's sunrise/sunset at Rotterdam's exact latitude versus its klima
-// band's representative latitude (longitude held fixed at Rotterdam's exact
-// coordinate, isolating the latitude substitution) — must stay under 5min.
+// band's representative latitude, longitude held fixed at Rotterdam's exact
+// coordinate — isolates the latitude substitution alone. Kept separate from
+// the combined "machine" check above (which varies meridian and klima
+// latitude together): a regression here can only be the latitude axis, so
+// this is what actually tells the two apart. At the 30-minute step the
+// klima band is +-15min of day length, so expect under 8min (was under 5min
+// at the old 20-minute/+-10min step).
 (function verifyKlimaSunriseSunset() {
   var noon = localNoon(new Date());
   var jd = noon.getTime() / 86400000 + 2440587.5;
@@ -1516,20 +1528,25 @@ function minutesOfDayToClockText(totalMinutes) {
   var sunriseDiff = evKlima.sunrise - evExact.sunrise;
   var sunsetDiff = evKlima.sunset - evExact.sunset;
   console.log("Today's sunrise/sunset, Rotterdam exact latitude vs klima latitude — diff:",
-    sunriseDiff.toFixed(2) + "min / " + sunsetDiff.toFixed(2) + "min (expect under 5min)");
+    sunriseDiff.toFixed(2) + "min / " + sunsetDiff.toFixed(2) + "min (expect under 8min)");
 })();
 
 [
-  { lon: 4.47917, expect: "+00:20" },
+  { lon: 4.47917, expect: "+00:30" },
   { lon: -0.1276, expect: "+00:00" },
   { lon: -74.006, expect: "-05:00" },
-  { lon: 139.692, expect: "+09:20" },
-  { lon: 36.817, expect: "+02:20" },
-  { lon: -78.467, expect: "-05:20" },
+  { lon: 139.692, expect: "+09:30" },
+  { lon: 36.817, expect: "+02:30" },
+  { lon: -78.467, expect: "-05:00" },
   { lon: 180, expect: "+12:00" },
-  { lon: -180, expect: "+12:00" }
+  { lon: -180, expect: "+12:00 (normalised, not -12:00)" }
 ].forEach(function(c) {
-  console.log("Solar zone lon " + c.lon + " ->", formatOffsetMinutes(skyZoneOffsetMinutes(c.lon)), " expect:", c.expect);
+  var zone = skyZoneOffsetMinutes(c.lon);
+  var trueOffset = c.lon * 4;
+  var err = trueOffset - zone;
+  console.log("Solar zone lon " + c.lon + " ->", formatOffsetMinutes(zone),
+    "(true " + (trueOffset >= 0 ? "+" : "") + trueOffset.toFixed(1) + ", err " + (err >= 0 ? "+" : "") + err.toFixed(1) + ")",
+    " expect:", c.expect);
 });
 
 (function() {
@@ -1541,12 +1558,12 @@ function minutesOfDayToClockText(totalMinutes) {
   var civil = displayWallClock(now);
   var civilMinutesOfDay = civil.hours * 60 + civil.minutes + (civil.seconds + civil.milliseconds / 1000) / 60;
   var gapMinutes = Math.round((((civilMinutesOfDay - skyMinutesOfDay) % 1440) + 1440 + 720) % 1440 - 720);
-  // Rotterdam's solar zone is fixed at +00:20; civil offset shifts with DST
-  // (CET +01:00 / CEST +02:00), so the gap is necessarily seasonal: 40 min
-  // in winter (60 - 20), 100 min (1h40m) in summer (120 - 20) -- not one
+  // Rotterdam's solar zone is fixed at +00:30; civil offset shifts with DST
+  // (CET +01:00 / CEST +02:00), so the gap is necessarily seasonal: 30 min
+  // in winter (60 - 30), 90 min (1h30m) in summer (120 - 30) -- not one
   // constant, because only one of the two sides of the gap observes DST.
   console.log("Rotterdam solar time / civil time:", minutesOfDayToClockText(skyMinutesOfDay), "/", minutesOfDayToClockText(civilMinutesOfDay),
-    " gap:", gapMinutes + "min (expect 40 in CET winter, 100 in CEST summer)");
+    " gap:", gapMinutes + "min (expect 30 in CET winter, 90 in CEST summer)");
 })();
 
 // 5. Twilight bands — the four boundary pairs for today, in local time.
